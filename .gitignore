@@ -1,8 +1,11 @@
 
-/build_WII/
 /build_GC/
 
 /release/
+/package/
 
 *.elf
 *.dol
+*.map
+
+tools/preview_*.png
