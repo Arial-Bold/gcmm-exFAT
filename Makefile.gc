@@ -36,8 +36,8 @@ LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-# libdvm reads FAT, FAT32 and exFAT SD cards
-LIBS	:=	-ldvm -logc -lm
+# libfat (from libdvm) reads FAT, FAT32 and exFAT SD cards
+LIBS	:=	-lfat -logc -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
