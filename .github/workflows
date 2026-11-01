@@ -1,0 +1,30 @@
+name: Build GCMM
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ghcr.io/extremscorner/libogc2:latest
+
+    steps:
+      - name: Get the source code
+        uses: actions/checkout@v5
+
+      - name: Build the .dol
+        run: make
+
+      - name: Gather files for the SD card
+        run: |
+          mkdir -p package/gcmm
+          cp gcmm_GC.dol package/gcmm/default.dol
+          cp dist/opening.bnr package/gcmm/opening.bnr
+
+      - name: Upload result
+        uses: actions/upload-artifact@v6
+        with:
+          name: gcmm
+          path: package/
