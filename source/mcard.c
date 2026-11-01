@@ -19,10 +19,10 @@
 #include <ogc/libversion.h>
 #if (_V_MAJOR_ <= 2) && (_V_MINOR_ <= 2)
 #ifndef CARD_SetStatusEx
-#define CARD_SetStatusEx __card_setstatusex
+#define CARD_SetStatusEx(chn,fileno,entry) __card_setstatusex(chn,fileno,(struct card_direntry *)(entry))
 #endif
 #ifndef CARD_GetStatusEx
-#define CARD_GetStatusEx __card_getstatusex
+#define CARD_GetStatusEx(chn,fileno,entry) __card_getstatusex(chn,fileno,(struct card_direntry *)(entry))
 #endif
 #include "card.h"
 extern s32 __card_setstatusex(s32 chn,s32 fileno,struct card_direntry *entry);
@@ -68,6 +68,7 @@ int folderCount;
 int displaypath;
 int maxfile;
 extern int cancel;
+extern int doall;
 extern bool offsetchanged;
 extern int mode;
 
@@ -186,9 +187,9 @@ u16 FreeBlocks(s32 chn)
 	if (noinserted)
 	{
 		if (mode == 300)//Backup mode
-			writeStatusBar("Pick a file using UP or DOWN ", "Press A to backup savegame");
+			writeStatusBar("Choose a save to back up.", "A: Back up  \x95  R: Back up all  \x95  B: Back");
 		else if (mode == 400)//Restore mode
-			writeStatusBar("Pick a file using UP or DOWN", "Press A to restore to Memory Card ");
+			writeStatusBar("Choose a save to put on the memory card.", "A: Restore  \x95  R: Restore all  \x95  B: Back");
 		else
 			writeStatusBar("","");
 	}
@@ -829,17 +830,12 @@ void MC_DeleteMode(int slot)
 	
 	displaypath = 0;
 	
-	clearRightPane();
-	DrawText(386,130,"D e l e t e   M o d e");
-	DrawText(386,134,"_____________________");
+	ListBegin("Delete");
 	char msg[1024];
 
-	writeStatusBar("Reading memory card... ", "");
+	writeStatusBar("Reading the memory card\x85", "");
 	/*** Get the directory listing from the memory card ***/
 	memitems = CardGetDirectory (slot);
-
-	setfontsize (14);
-	writeStatusBar("Choose a file with UP button or DOWN button ", "Press A button to delete ") ;
 
 	/*** If it's a blank card, get out of here ***/
 	if (!memitems)
@@ -850,12 +846,18 @@ void MC_DeleteMode(int slot)
 	{
 		while(1)
 		{
-			// TODO: implement showselector
+			writeStatusBar("Choose a save to delete.", "A: Delete  \x95  B: Back");
 			selected = ShowSelector(1);
 			if (cancel)
 			{
-				WaitPrompt ("Delete action cancelled !");
+				writeStatusBar("", "");
 				return;
+			}
+			if (doall || selected < 0)
+			{
+				/* R (all saves) does nothing here */
+				doall = 0;
+				continue;
 			}
 
 			//0 = Z or 2 was pressed -> delete the file

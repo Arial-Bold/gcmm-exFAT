@@ -21,16 +21,14 @@ DKV		:= $(shell $(DEVKITPPC)/bin/$(CC) --version | sed 's/^.*(devkitPPC release 
 TARGET		:=	gcmm_GC
 BUILD		:=	build_GC
 SOURCES		:=	source source/aram
-DATA		:=	data data-gc
+DATA		:=
 INCLUDES	:=
 
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
 
-THEME = -DLIGHT_MODE
-
-CFLAGS	= -g -O2 -Wall $(MACHDEP) $(INCLUDE) -DDEVKITPPCVER=$(DKV) $(THEME)
+CFLAGS	= -g -O2 -Wall $(MACHDEP) $(INCLUDE) -DDEVKITPPCVER=$(DKV)
 CXXFLAGS	=	$(CFLAGS)
 
 LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
@@ -38,7 +36,8 @@ LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS	:=	-lfat -logc `freetype-config --libs` -lz -lm
+# libdvm reads FAT, FAT32 and exFAT SD cards
+LIBS	:=	-ldvm -logc -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
@@ -90,8 +89,7 @@ export HFILES := $(addsuffix .h,$(subst .,_,$(BINFILES)))
 export INCLUDE	:=	$(foreach dir,$(INCLUDES), -iquote $(CURDIR)/$(dir)) \
 					$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
 					-I$(CURDIR)/$(BUILD) \
-					-I$(LIBOGC_INC) \
-					`freetype-config --cflags`
+					-I$(LIBOGC_INC)
 
 #---------------------------------------------------------------------------------
 # build a list of library paths

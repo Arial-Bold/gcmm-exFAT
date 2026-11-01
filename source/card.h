@@ -33,6 +33,36 @@ distribution.
 #include <ogc/libversion.h>
 #if (_V_MAJOR_ <= 2) && (_V_MINOR_ <= 2)
 
+struct card_direntry;
+
+#if defined(__OGC_CARD_H__) && !defined(GCMM_CARD_IMPL)
+/* libogc2's own card.h (included by gccore.h) already has everything the two
+ * share, with the same layouts: only add what GCMM's card.c has on top.
+ * (Newer libogc2 renamed its include guard, so the two no longer skip each
+ * other and would clash.) */
+#include <gctypes.h>
+#ifdef __cplusplus
+   extern "C" {
+#endif
+s32 CARD_GetFreeBlocks(s32 chn, u16* freeblocks);
+s32 __card_getstatusex(s32 chn,s32 fileno,struct card_direntry *entry);
+s32 __card_setstatusex(s32 chn,s32 fileno,struct card_direntry *entry);
+s32 CARD_GetSerialNo(s32 chn,u32 *serial1,u32 *serial2);
+s32 __card_read(s32 chn,u32 address,u32 block_len,void *buffer,cardcallback callback);
+s32 __card_write(s32 chn,u32 address,u32 block_len,void *buffer,cardcallback callback);
+s32 __card_sync(s32 chn);
+s32 __card_sectorerase(s32 chn,u32 sector,cardcallback callback);
+/* libogc2 says the count is a u16; GCMM's card.c fills a u32 */
+s32 GCMM_GetBlockCount(s32 chn,u32 *block_count) __asm__("CARD_GetBlockCount");
+#ifdef __cplusplus
+   }
+#endif
+#else
+/* all of it (card.c itself); and keep libogc2's card.h out */
+#ifndef __OGC_CARD_H__
+#define __OGC_CARD_H__
+#endif
+
 /*!
 \file card.h
 \brief Memory card subsystem
@@ -646,6 +676,8 @@ s32 __card_sectorerase(s32 chn,u32 sector,cardcallback callback);
 #ifdef __cplusplus
    }
 #endif /* __cplusplus */
+
+#endif /* __OGC_CARD_H__ */
 
 #endif
 

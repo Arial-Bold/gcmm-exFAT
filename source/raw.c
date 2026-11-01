@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <malloc.h>
 #include <sys/dir.h>
+#include <sys/stat.h>
 #include <dirent.h>
 #include <ogcsys.h>
 #include <ogc/libversion.h>
@@ -272,7 +273,7 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 		return -1;
 	}
 
-	err = CARD_GetBlockCount(slot,(u32*)&BlockCount);
+	err = GCMM_GetBlockCount(slot,(u32*)&BlockCount);
 	if(err < 0 )
 	{
 		WaitCardError("BakRaw Blockcount", err);
@@ -392,7 +393,7 @@ s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 		return -1;
 	}
 
-	err = CARD_GetBlockCount(slot,(u32*)&BlockCount);
+	err = GCMM_GetBlockCount(slot,(u32*)&BlockCount);
 	if(err < 0 )
 	{
 		WaitCardError("RestRaw Blockcount", err);

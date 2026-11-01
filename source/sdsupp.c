@@ -2,12 +2,12 @@
  * SD Card Support Functions
  ****************************************************************************/
 #include <gccore.h>
-#include <network.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <sys/dir.h>
+#include <sys/stat.h>
 #include <dirent.h>
 
 #include "sdsupp.h"

@@ -30,6 +30,10 @@ distribution.
 #include <ogc/libversion.h>
 #if (_V_MAJOR_ <= 2) && (_V_MINOR_ <= 2)
 
+/* this file is the memory card code: use GCMM's card.h, not libogc2's */
+#define GCMM_CARD_IMPL
+#define __OGC_CARD_H__
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
