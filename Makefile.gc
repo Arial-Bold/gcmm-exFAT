@@ -46,9 +46,10 @@ LDFLAGS	=	-g $(MACHDEP) -Wl,--gc-sections -Wl,-Map,$(notdir $@).map
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-# libfat (from libdvm) reads FAT, FAT32 and exFAT SD cards; libbba is the
-# network (Broadband Adapter, ETH2GC) and must come before libogc
-LIBS	:=	-lfat -lbba -logc -lm
+# libfat (from libdvm) reads FAT, FAT32 and exFAT SD cards; libaesnd plays
+# the menu sounds; libbba is the network (Broadband Adapter, ETH2GC). They
+# must come before libogc
+LIBS	:=	-lfat -laesnd -lbba -logc -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing

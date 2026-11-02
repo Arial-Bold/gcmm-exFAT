@@ -8,7 +8,7 @@ GCMM exFAT backs up, restores and deletes the saves on your GameCube memory card
 - **display settings**: resolution, 4:3 or 16:9, picture width and overscan
 - **Update from GitHub**, right from Settings, with a network adapter
 - both memory cards shown at the top when there's one in each slot
-- the controls along the bottom of every screen
+- the controls along the bottom of every screen, and menu sounds
 - a new logo and splash screen
 
 It runs on the GameCube only.
@@ -51,6 +51,8 @@ Press START on the main screen, or choose Settings in Card tools.
 - **Screen**: 4:3, or 16:9 if your TV stretches the picture to fill a widescreen.
 - **Picture width**: Full uses the whole width of the TV picture; Standard leaves a border.
 - **Overscan**: pulls everything in from the edges if your TV cuts them off.
+- **Menu sounds**: how loud the sounds are when you move and choose, from Off to 10 (4 to start with).
+- **Launcher**: which .dol at the root of the SD card Exit to Launcher starts. Left and Right go through the ones on the card. Until you choose, it's `autoexec.dol`, `boot.dol`, `ipl.dol` or a `swiss*.dol`, whichever is there.
 - **Update from GitHub**: see below.
 - **Exit to Launcher**: leaves GCMM exFAT.
 
@@ -62,7 +64,7 @@ With a Broadband Adapter or a WIZnet-based adapter (such as the ETH2GC) connecte
 
 ## Leaving GCMM exFAT
 
-B on the main screen (or Exit to Launcher in Settings) goes back to the loader that started it, if there is one; otherwise it starts `autoexec.dol` from the SD card (your Launcher, if that's where it is), and failing that it restarts the GameCube.
+B on the main screen (or Exit to Launcher in Settings) starts the Launcher chosen in Settings. If there's no .dol at the root of the SD card, it goes back to the loader that started GCMM exFAT if there is one, or offers to restart the GameCube.
 
 ## Choosing the device when starting
 
@@ -79,7 +81,7 @@ docker run --rm -v "$PWD:/src" -w /src ghcr.io/extremscorner/libogc2:latest make
 
 Every push to GitHub builds it too (see the Actions tab), and the result is a zip with the `gcmm` folder ready for the SD card.
 
-The font textures, logo and card pictures are made by `tools/make_assets.py` (needs Python 3 with Pillow and NumPy), which writes `source/ui_assets.c` and `.h`.
+The font textures, logo and card pictures are made by `tools/make_assets.py` (needs Python 3 with Pillow and NumPy), which writes `source/ui_assets.c` and `.h`. `tools/make_banner.py` makes `dist/opening.bnr`, the banner and name your Launcher shows.
 
 ## Credits
 
