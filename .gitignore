@@ -9,3 +9,5 @@
 *.map
 
 tools/preview_*.png
+
+/third_party/
