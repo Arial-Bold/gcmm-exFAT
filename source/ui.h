@@ -24,7 +24,10 @@ typedef struct {
 	int widescreen;   /* 0 = 4:3, 1 = 16:9 */
 	int full_width;   /* 1 = 704 (default), 0 = 640 */
 	int overscan;     /* percent, 0..UI_OVERSCAN_MAX */
+	int sound_volume; /* menu sounds, 0 (off)..UI_VOLUME_MAX */
+	char launcher[64];/* the .dol at the root of the SD card that Exit starts ("" = find one) */
 } UiSettings;
+#define UI_VOLUME_MAX 10
 
 extern UiSettings ui_set;
 

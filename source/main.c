@@ -30,6 +30,10 @@
 #include "saves.h"
 #include "aram/sidestep.h"
 #include "net/storage.h"
+#include "dolload.h"
+#include "sound.h"
+#include <dirent.h>
+#include <strings.h>
 #include "net/update.h"
 
 #define PSOSDLOADID 0x7c6000a6
@@ -582,57 +586,101 @@ static bool card_present(void)
 }
 
 /****************************************************************************
-* Starts a .dol from the SD card (its path goes to it as argv[0], so it knows
-* where it lives). Only returns if the file couldn't be read.
+* Starting another .dol (the Launcher, or a new version after an update)
 ****************************************************************************/
+
+/* dolload.c calls this just before it jumps: everything of ours stops */
+void dol_before_jump(void)
+{
+	ui_shutdown();
+	sound_shutdown();
+	deinitFAT();
+}
+
+/* Starts a .dol from the SD card. Only returns if it couldn't (err says why). */
+static bool launch_dol(const char *path, char *err, size_t errlen)
+{
+	return dol_launch(path, err, errlen);
+}
+
 bool gcmm_launch_dol(const char *path)
 {
-	FILE *fp = fopen(path, "rb");
-	if (!fp) return false;
-	fseek(fp, 0, SEEK_END);
-	int size = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-	u8 *dol = NULL;
-	if (size > 0 && size < (int)(AR_GetSize() - (64*1024))) dol = (u8*) memalign(32, size);
-	if (!dol || fread(dol, 1, size, fp) != (size_t)size) {
-		fclose(fp);
-		free(dol);
-		return false;
+	char err[200];
+	return launch_dol(path, err, sizeof(err));
+}
+
+/* The .dol files at the root of the SD card, sorted, for Settings > Launcher */
+static int cmp_name(const void *a, const void *b) { return strcasecmp((const char *)a, (const char *)b); }
+int launcher_list(char (*names)[64], int max)
+{
+	int n = 0;
+	if (!have_sd) return 0;
+	char root[8];
+	snprintf(root, sizeof(root), "%s:/", fatpath);
+	DIR *d = opendir(root);
+	if (!d) return 0;
+	struct dirent *ent;
+	while ((ent = readdir(d)) && n < max) {
+		size_t l = strlen(ent->d_name);
+		if (ent->d_name[0] == '.' || l < 5 || l >= 64 || strcasecmp(ent->d_name + l - 4, ".dol")) continue;
+		char path[80];
+		snprintf(path, sizeof(path), "%s%s", root, ent->d_name);
+		if (!storage_is_file(path)) continue;
+		snprintf(names[n++], 64, "%s", ent->d_name);
 	}
-	fclose(fp);
-	static char arg0[300];
-	snprintf(arg0, sizeof(arg0), "%s", path);
-	char *argv[1] = { arg0 };
-	deinitFAT();
-	ui_shutdown();
-	DOLtoARAM(dol, 1, argv);
-	/* only gets here if the .dol couldn't start */
-	SYS_ResetSystem(SYS_HOTRESET, 0, 0);
-	return false;
+	closedir(d);
+	qsort(names, n, 64, cmp_name);
+	return n;
+}
+
+/* The Launcher Exit starts: the one chosen in Settings if it's there,
+ * otherwise autoexec.dol, boot.dol, ipl.dol or a swiss*.dol at the root.
+ * "" if there's none. */
+const char *launcher_current(void)
+{
+	static char names[48][64];
+	static const char *const usual[] = { "autoexec.dol", "boot.dol", "ipl.dol" };
+	int n = launcher_list(names, 48);
+	if (ui_set.launcher[0])
+		for (int i = 0; i < n; i++) if (!strcasecmp(names[i], ui_set.launcher)) return names[i];
+	for (unsigned u = 0; u < sizeof(usual) / sizeof(usual[0]); u++)
+		for (int i = 0; i < n; i++) if (!strcasecmp(names[i], usual[u])) return names[i];
+	for (int i = 0; i < n; i++) if (!strncasecmp(names[i], "swiss", 5)) return names[i];
+	return "";
 }
 
 /****************************************************************************
-* Leave GCMM: back to the loader that started it, or the Launcher
-* (autoexec.dol on the SD card), or restart the GameCube
+* Leave GCMM: start the Launcher (Settings > Launcher), or go back to the
+* loader that started it, or restart the GameCube. Returns if the Launcher
+* couldn't be started (after saying why).
 ****************************************************************************/
 static void exit_to_launcher(void)
 {
 	int *psoid = (int *) 0x80001800;
 	void (*PSOReload) () = (void (*)()) 0x80001800;
+	char err[200];
 
 	ShowAction ("Exiting\x85");
+	const char *name = launcher_current();
+	if (have_sd && name[0]) {
+		char path[80];
+		snprintf(path, sizeof(path), "%s:/%s", fatpath, name);
+		launch_dol(path, err, sizeof(err));
+		/* only gets here if it couldn't be started */
+		WaitPrompt(err);
+		return;
+	}
 	if (psoid[0] == PSOSDLOADID){
-		deinitFAT();
 		ui_shutdown();
+		sound_shutdown();
+		deinitFAT();
 		PSOReload ();
 	}
-	if (have_sd){
-		char exitdol[64];
-		sprintf(exitdol, "%s:/autoexec.dol",fatpath);
-		gcmm_launch_dol(exitdol);
-	}
-	deinitFAT();
+	if (WaitPromptChoice("There's no Launcher (.dol) at the root of the SD card. Restart the GameCube?", "Cancel", "Restart") == 0)
+		return;
 	ui_shutdown();
+	sound_shutdown();
+	deinitFAT();
 	SYS_ResetSystem(SYS_HOTRESET, 0, 0);
 }
 
@@ -646,6 +694,7 @@ int main (int argc, char *argv[])
 
 	ui_init();      /* video; the splash screen waits for the settings (below) */
 	VIDEO_SetPostRetraceCallback (updatePAD);
+	sound_init();   /* (the sounds are made in the background) */
 	storage_set_program(argc > 0 && argv ? argv[0] : NULL);
 
 	detect_devices();

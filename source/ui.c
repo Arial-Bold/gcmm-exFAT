@@ -23,7 +23,7 @@
 
 /* ================================================================ settings */
 
-UiSettings ui_set = { UI_RES_AUTO, 0, 1, 0 };
+UiSettings ui_set = { UI_RES_AUTO, 0, 1, 0, 4, "" };
 static char settings_file[300], settings_old[300];
 
 void ui_settings_path(const char *path, const char *old_path) {
@@ -50,10 +50,14 @@ void ui_settings_load(void) {
 		if (!eq) continue;
 		*eq = 0;
 		int v = atoi(eq + 1);
+		char *nl = strpbrk(eq + 1, "\r\n");
+		if (nl) *nl = 0;
 		if (!strcmp(line, "display.resolution")) ui_set.resolution = (v >= 0 && v < UI_RES_COUNT) ? v : UI_RES_AUTO;
 		else if (!strcmp(line, "display.widescreen")) ui_set.widescreen = v ? 1 : 0;
 		else if (!strcmp(line, "display.full_width")) ui_set.full_width = v ? 1 : 0;
 		else if (!strcmp(line, "display.overscan")) ui_set.overscan = v < 0 ? 0 : v > UI_OVERSCAN_MAX ? UI_OVERSCAN_MAX : v;
+		else if (!strcmp(line, "sound.volume")) ui_set.sound_volume = v < 0 ? 0 : v > UI_VOLUME_MAX ? UI_VOLUME_MAX : v;
+		else if (!strcmp(line, "exit.launcher")) snprintf(ui_set.launcher, sizeof(ui_set.launcher), "%s", eq + 1);
 	}
 	fclose(f);
 	ui_settings_changed();
@@ -73,6 +77,8 @@ bool ui_settings_save(void) {
 	ok = fprintf(f, "display.widescreen=%d\n", ui_set.widescreen) > 0 && ok;
 	ok = fprintf(f, "display.full_width=%d\n", ui_set.full_width) > 0 && ok;
 	ok = fprintf(f, "display.overscan=%d\n", ui_set.overscan) > 0 && ok;
+	ok = fprintf(f, "sound.volume=%d\n", ui_set.sound_volume) > 0 && ok;
+	ok = fprintf(f, "exit.launcher=%s\n", ui_set.launcher) > 0 && ok;
 	ok = fflush(f) == 0 && ok;
 	fsync(fileno(f));   /* straight onto the card, not left waiting in a cache */
 	ok = fclose(f) == 0 && ok;
@@ -752,9 +758,9 @@ static void settings_screen(void) {
 	text(34, 80, "Settings", 12, TITLE, 0, 380);
 	rule(32, 92, 576);
 	for (int i = 0; i < sc.orow_count; i++) {
-		float x = 34, y = 104 + i * 40, w = 566, h = 32, cy = y + h / 2;
+		/* three groups: the picture, sounds and Launcher, then update and exit */
+		float x = 34, y = 100 + i * 31 + (i >= 4 ? 6 : 0) + (i >= 6 ? 6 : 0), w = 566, h = 27, cy = y + h / 2;
 		bool on = i == sc.osel;
-		if (i >= 4) y += 8, cy += 8;   /* a little gap before the GCMM exFAT rows */
 		rect_v(x, y, w, h, rgba(76, 94, 114, on ? 150 : 80), rgba(40, 54, 70, on ? 160 : 90));
 		rect(x + 1, y + 1, w - 2, 1, rgba(255, 255, 255, 30));
 		text(x + 16, cy, sc.orows[i].label, 13, TEXT, 0, 260);

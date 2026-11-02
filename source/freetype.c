@@ -24,7 +24,9 @@
 #include "ui.h"
 #include "saves.h"
 #include "net/update.h"
+#include "sound.h"
 #include <stdarg.h>
+#include <strings.h>
 
 /*** Globals ***/
 bool offsetchanged = true;
@@ -94,6 +96,9 @@ static void read_pad(void)
 	if (sy < -48) pad_held |= PAD_BUTTON_DOWN;
 	pad_down = pad_held & ~held_prev;
 	held_prev = pad_held;
+	/* the menu sounds: A chooses, B goes back, the other buttons do something */
+	if (pad_down & PAD_BUTTON_B) sound_play(SFX_BACK);
+	else if (pad_down & (PAD_BUTTON_A | PAD_BUTTON_X | PAD_BUTTON_Y | PAD_TRIGGER_Z | PAD_BUTTON_START)) sound_play(SFX_SELECT);
 }
 
 /* + Control Pad with repeat: a press, then again every few frames while held */
@@ -101,10 +106,10 @@ static int repeat_frames;
 static u32 dpad_step(void)
 {
 	const u32 dirs = PAD_BUTTON_UP | PAD_BUTTON_DOWN | PAD_BUTTON_LEFT | PAD_BUTTON_RIGHT;
-	if (pad_down & dirs) { repeat_frames = 0; return pad_down & dirs; }
+	if (pad_down & dirs) { repeat_frames = 0; sound_play(SFX_HOVER); return pad_down & dirs; }
 	if (pad_held & dirs) {
 		repeat_frames++;
-		if (repeat_frames >= 18 && (repeat_frames - 18) % 5 == 0) return pad_held & dirs;
+		if (repeat_frames >= 18 && (repeat_frames - 18) % 5 == 0) { sound_play(SFX_HOVER); return pad_held & dirs; }
 		return 0;
 	}
 	repeat_frames = 0;
@@ -349,18 +354,25 @@ void UpdateMainCards(void)
 
 /* The Settings page: the picture, then Update from GitHub and Exit to
  * Launcher. Returns 500 for Exit to Launcher, otherwise 0. */
-#define SET_ROWS 6
-enum { SET_RES, SET_SCREEN, SET_WIDTH, SET_OVERSCAN, SET_UPDATE, SET_EXIT };
+#define SET_ROWS 8
+enum { SET_RES, SET_SCREEN, SET_WIDTH, SET_OVERSCAN, SET_SOUNDS, SET_LAUNCHER, SET_UPDATE, SET_EXIT };
+int launcher_list(char (*names)[64], int max);   /* main.c */
+const char *launcher_current(void);
 
 static void settings_rows(void)
 {
-	char ov[16], ver[32];
+	char ov[16], ver[32], vol[16], lau[72];
 	if (ui_set.overscan) snprintf(ov, sizeof(ov), "%d%%", ui_set.overscan); else snprintf(ov, sizeof(ov), "Off");
+	if (ui_set.sound_volume) snprintf(vol, sizeof(vol), "%d", ui_set.sound_volume); else snprintf(vol, sizeof(vol), "Off");
+	const char *l = launcher_current();
+	if (l[0]) snprintf(lau, sizeof(lau), "%s", l); else snprintf(lau, sizeof(lau), "\x02" "None on the SD card");
 	snprintf(ver, sizeof(ver), "\x02" "This is %s", appversion);
 	ui_overlay_row(SET_RES, "Resolution", ui_resolution_name(ui_set.resolution));
 	ui_overlay_row(SET_SCREEN, "Screen", ui_set.widescreen ? "16:9" : "4:3");
 	ui_overlay_row(SET_WIDTH, "Picture width", ui_set.full_width ? "Full" : "Standard");
 	ui_overlay_row(SET_OVERSCAN, "Overscan", ov);
+	ui_overlay_row(SET_SOUNDS, "Menu sounds", vol);
+	ui_overlay_row(SET_LAUNCHER, "Launcher", lau);
 	ui_overlay_row(SET_UPDATE, "Update from GitHub", ver);
 	ui_overlay_row(SET_EXIT, "Exit to Launcher", NULL);
 	ui_overlay_rows(SET_ROWS);
@@ -373,6 +385,8 @@ static void settings_help(int row)
 		{ "Screen", "Choose 16:9 if your TV stretches the picture to fill the screen." },
 		{ "Picture width", "Full fills the width of the TV picture. Standard leaves a border." },
 		{ "Overscan", "Pulls everything in from the edges if your TV cuts them off." },
+		{ "Menu sounds", "How loud the sounds are when you move and choose. Off for none." },
+		{ "Launcher", "The program at the root of the SD card that Exit to Launcher starts." },
 		{ "Update from GitHub", "Looks for a newer GCMM exFAT. Needs a network adapter." },
 		{ "Exit to Launcher", "Leaves GCMM exFAT." },
 	};
@@ -447,7 +461,7 @@ static int SettingsMenu(void)
 			}
 			d = 1;   /* A steps a choice on, like Right */
 		}
-		if (d && row <= SET_OVERSCAN) {
+		if (d && row <= SET_LAUNCHER) {
 			switch (row) {
 			case SET_RES: {
 				int old = ui_set.resolution;
@@ -466,6 +480,22 @@ static int SettingsMenu(void)
 				if (ui_set.overscan < 0) ui_set.overscan = 0;
 				if (ui_set.overscan > UI_OVERSCAN_MAX) ui_set.overscan = (pad_down & PAD_BUTTON_A) ? 0 : UI_OVERSCAN_MAX;
 				break;
+			case SET_SOUNDS:
+				ui_set.sound_volume += d;
+				if (ui_set.sound_volume < 0) ui_set.sound_volume = 0;
+				if (ui_set.sound_volume > UI_VOLUME_MAX) ui_set.sound_volume = (pad_down & PAD_BUTTON_A) ? 0 : UI_VOLUME_MAX;
+				sound_play(SFX_CONFIRM);   /* to hear the new level */
+				break;
+			case SET_LAUNCHER: {
+				static char names[48][64];
+				int n = launcher_list(names, 48), cur = -1;
+				if (n == 0) { WaitPrompt("There are no .dol files at the root of the SD card."); settings_help(row); break; }
+				const char *now = launcher_current();
+				for (int i = 0; i < n; i++) if (!strcasecmp(names[i], now)) cur = i;
+				cur = cur < 0 ? 0 : (cur + d + n) % n;
+				snprintf(ui_set.launcher, sizeof(ui_set.launcher), "%s", names[cur]);
+				break;
+			}
 			}
 			settings_rows();
 			if (pad_down & PAD_BUTTON_A) WaitRelease();
