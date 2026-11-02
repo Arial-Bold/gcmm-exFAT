@@ -8,20 +8,23 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: ghcr.io/extremscorner/libogc2:latest
 
     steps:
       - name: Get the source code
         uses: actions/checkout@v5
 
+      - name: Download mbedTLS
+        run: sh get-deps.sh
+
       - name: Build the .dol
-        run: make
+        run: docker run --rm -v "$PWD:/src" -w /src ghcr.io/extremscorner/libogc2:latest make
 
       - name: Gather files for the SD card
         run: |
           mkdir -p package/gcmm
           cp gcmm_GC.dol package/gcmm/default.dol
           cp dist/opening.bnr package/gcmm/opening.bnr
+          cp dist/cacert.pem package/gcmm/cacert.pem
 
       - name: Upload result
         uses: actions/upload-artifact@v6
