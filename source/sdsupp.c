@@ -250,6 +250,11 @@ int SDLoadMCImage(char *sdfilename)
 	return bytesToRead;
 }
 
+/* set while the save lists read headers: a file that isn't a save is just
+ * skipped there, without a message */
+int sd_quiet = 0;
+#define SD_COMPLAIN(m) do { if (!sd_quiet) WaitPrompt(m); } while (0)
+
 int SDLoadMCImageHeader(char *sdfilename)
 {
 
@@ -275,7 +280,7 @@ int SDLoadMCImageHeader(char *sdfilename)
 	if (handle <= 0)
 	{
 		sprintf(msg, "Couldn't open %s", filename);
-		WaitPrompt (msg);
+		SD_COMPLAIN(msg);
 		return 0;
 	}
 
@@ -286,8 +291,8 @@ int SDLoadMCImageHeader(char *sdfilename)
 	if (bytesToRead < 64) //We don't want to read something smaller than the header
 	{
 		sprintf(msg, "Incorrect file size %ld . Not GCI File", bytesToRead);
-		WaitPrompt (msg);
-		//WaitPrompt("Incorrect file size.");
+		SD_COMPLAIN(msg);
+		//SD_COMPLAIN("Incorrect file size.");
 		return 0;
 	}
 
@@ -313,7 +318,7 @@ int SDLoadMCImageHeader(char *sdfilename)
 			}
 			else
 			{
-				WaitPrompt ("Incorrect Header. Not GCS File");
+				SD_COMPLAIN("Incorrect Header. Not GCS File");
 				return 0;
 			}
 		}
@@ -327,7 +332,7 @@ int SDLoadMCImageHeader(char *sdfilename)
 				}
 				else
 				{
-					WaitPrompt ("Incorrect Header. Not SAV File");
+					SD_COMPLAIN("Incorrect Header. Not SAV File");
 					return 0;
 				}
 			}
@@ -383,7 +388,7 @@ int SDLoadMCImageHeader(char *sdfilename)
 	if (length !=  l2)
 	{
 		sprintf(msg, "File length does not equal file size. Wrong extension? (l1 = %x l2 = %x)", length,l2);
-		WaitPrompt (msg);//"File Length does not equal filesize");
+		SD_COMPLAIN(msg);//"File Length does not equal filesize");
 		return 0;
 	}
 

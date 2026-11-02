@@ -1,6 +1,7 @@
 /****************************************************************************
-* freetype.c - GCMM's screens: the main screen, the save lists, the prompts
-* along the bottom and the settings.
+* freetype.c - GCMM exFAT's screens: the main screen (Back up, Restore,
+* Card tools), the save lists with their tick boxes, the prompts along the
+* bottom and the settings.
 *
 * (The name is historical: text used to be drawn with FreeType. Everything
 * is now described to ui.c, which draws it in the System look.)
@@ -21,6 +22,7 @@
 #include "bitmap.h"
 #include "raw.h"
 #include "ui.h"
+#include "saves.h"
 
 /*** Globals ***/
 bool offsetchanged = true;
@@ -208,14 +210,14 @@ static const char *DeviceShortName(int dev)
 	}
 }
 
+void UpdateMainCards(void);
+
 void UpdateTitleInfo(void)
 {
 	char txt[64];
-	if (CUR_DEVICE && have_sd)
-		snprintf(txt, sizeof(txt), "%s" DOT "%s", appversion, DeviceShortName(CUR_DEVICE));
-	else
-		snprintf(txt, sizeof(txt), "%s" DOT "No SD card", appversion);
+	snprintf(txt, sizeof(txt), "GCMM exFAT %s", appversion);
 	ui_title_info(txt);
+	UpdateMainCards();
 }
 
 static char sd_free[32];
@@ -235,8 +237,9 @@ void UpdateSDInfo(void)
 	}
 }
 
-/* What's in the memory card slot (only looks: doesn't mount the card) */
-static void UpdateMainCards(void)
+/* The header: what's in the memory card slot (only looks: doesn't mount
+ * the card), and the SD card */
+void UpdateMainCards(void)
 {
 	char mc_name[32], mc_info[48];
 	s32 size = 0, sect = 0;
@@ -355,42 +358,103 @@ static void SettingsMenu(void)
 	ui_overlay(UI_OVERLAY_NONE, "");
 	if (memcmp(&before, &ui_set, sizeof(ui_set))) {
 		if (have_sd) ui_settings_save();
-		else WaitPrompt("No SD card: these settings last until GCMM closes.");
+		else WaitPrompt("No SD card: these settings last until GCMM exFAT closes.");
 	}
 	WaitRelease();
 }
 
 /* ------------------------------------------------------------ main screen */
 
-static int main_row = 0;
+static int main_tile = 0;
+static char main_line[96] = "";
 #define EXIT_HOLD_FRAMES 45
+
+/* the line along the bottom of the main screen: how many saves there are,
+ * and how many have no backup yet (reads the memory card's list) */
+void MainSummaryRefresh(void)
+{
+	int total = 0;
+	int fresh = have_sd ? saves_count_new(MEM_CARD, &total) : -1;
+	if (CARD_Probe(MEM_CARD) <= 0) snprintf(main_line, sizeof(main_line), "Put a memory card in Slot %c to begin.", MEM_CARD ? 'B' : 'A');
+	else if (!have_sd) snprintf(main_line, sizeof(main_line), "There's no SD card: choose one in Card tools.");
+	else if (fresh < 0 || !total) snprintf(main_line, sizeof(main_line), "There are no saves on this memory card.");
+	else if (!fresh) snprintf(main_line, sizeof(main_line), "%d save%s on the memory card, all of them backed up.", total, total == 1 ? "" : "s");
+	else snprintf(main_line, sizeof(main_line), "%d save%s on the memory card, %d of them not backed up yet.", total, total == 1 ? "" : "s", fresh);
+}
 
 static void main_status(void)
 {
-	writeStatusBar("Back up, restore or delete the saves on your memory card.",
-	               "A: Open" DOT "START: Settings" DOT "Hold START: Exit to Launcher");
+	ui_action(NULL, 0);
+	ui_progress(-1);
+	writeStatusBar(main_line, "Pick one with the stick and press A. START: Settings.");
+}
+
+/* Card tools: the jobs that are needed less often */
+static int CardTools(void)
+{
+	static const char *rows[6] = { "Back up the whole card", "Restore a whole card", "Delete saves",
+	                               "Format the card", "Choose the SD card", "Settings" };
+	static const char *help[6] = {
+		"Copies everything on the memory card to one file on the SD card.",
+		"Puts a whole-card copy from the SD card back on the memory card.",
+		"Choose saves to delete from the memory card.",
+		"Erases everything on the memory card.",
+		"Use another SD card adapter.",
+		"Picture size and position.",
+	};
+	static const int codes[6] = { 700, 800, 200, 900, 1000, 0 };
+	int sel = 0;
+	ui_overlay(UI_OVERLAY_TOOLS, "Card tools");
+	for (int i = 0; i < 6; i++) ui_overlay_row(i, rows[i], NULL);
+	ui_overlay_rows(6);
+	ui_overlay_select(sel);
+	writeStatusBar((char *)help[sel], "B: Back");
+	WaitRelease();
+	for (;;) {
+		read_pad();
+		u32 step = dpad_step();
+		if (step & PAD_BUTTON_UP) sel = (sel + 5) % 6;
+		else if (step & PAD_BUTTON_DOWN) sel = (sel + 1) % 6;
+		if (step & (PAD_BUTTON_UP | PAD_BUTTON_DOWN)) { ui_overlay_select(sel); writeStatusBar((char *)help[sel], "B: Back"); }
+		if (pad_down & PAD_BUTTON_B) { sel = -1; break; }
+		if (pad_down & PAD_BUTTON_A) break;
+	}
+	ui_overlay(UI_OVERLAY_NONE, "");
+	WaitRelease();
+	if (sel < 0) return -1;
+	if (codes[sel] == 0) { SettingsMenu(); return -1; }
+	return codes[sel];
 }
 
 /****************************************************************************
 * SelectMode
-* 200 delete, 300 back up, 400 restore, 500 exit, 700 raw back up,
-* 800 raw restore, 900 format, 1000 choose device
+* 200 delete, 300 back up, 400 restore, 500 exit, 700 whole-card back up,
+* 800 whole-card restore, 900 format, 1000 choose device
 ****************************************************************************/
 int SelectMode ()
 {
 	int ret = 0, poll = 0, start_frames = 0;
+	int last_probe = -99;
 
 	UpdateTitleInfo();
-	UpdateMainCards();
 	ui_screen(UI_MAIN);
-	ui_main_select(main_row);
+	ui_main_select(main_tile);
 	main_status();
 	WaitRelease();
 
 	while (!ret)
 	{
 		read_pad();
-		if (++poll >= 60) { poll = 0; UpdateMainCards(); }
+		if (++poll >= 60) {
+			poll = 0;
+			UpdateMainCards();
+			/* a card put in or taken out: the line at the bottom follows */
+			int p = CARD_Probe(MEM_CARD) > 0;
+			if (p != last_probe) {
+				if (last_probe != -99) { MainSummaryRefresh(); main_status(); }
+				last_probe = p;
+			}
+		}
 
 		/* START: a tap opens the settings, holding it exits */
 		if (pad_held & PAD_BUTTON_START) {
@@ -404,28 +468,28 @@ int SelectMode ()
 			if (tapped) {
 				ui_main_select(-1);
 				SettingsMenu();
-				ui_main_select(main_row);
+				ui_main_select(main_tile);
 			}
 			main_status();
 			continue;
 		}
 
 		u32 step = dpad_step();
-		if (step & (PAD_BUTTON_UP | PAD_BUTTON_DOWN)) { main_row ^= 1; ui_main_select(main_row); }
+		if (step & PAD_BUTTON_LEFT) { main_tile = (main_tile + 2) % 3; ui_main_select(main_tile); }
+		if (step & PAD_BUTTON_RIGHT) { main_tile = (main_tile + 1) % 3; ui_main_select(main_tile); }
 
-		if (pad_held & PAD_TRIGGER_L) {
-			if (pad_down & PAD_BUTTON_Y) ret = 700;       /* back up the whole card */
-			else if (pad_down & PAD_BUTTON_X) ret = 800;  /* restore the whole card */
-			else if (pad_down & PAD_TRIGGER_Z) ret = 900; /* format */
+		if (pad_down & PAD_BUTTON_A) {
+			if (main_tile == 0) ret = 300;
+			else if (main_tile == 1) ret = 400;
+			else {
+				ui_main_select(-1);
+				int r = CardTools();
+				ui_main_select(main_tile);
+				main_status();
+				if (r > 0) ret = r;
+			}
 		}
-		else if (pad_down & PAD_BUTTON_A) ret = main_row ? 400 : 300;
-		else if (pad_down & PAD_BUTTON_Y) ret = 300;
-		else if (pad_down & PAD_BUTTON_X) ret = 400;
-		else if (pad_down & PAD_TRIGGER_Z) ret = 200;
-		else if (pad_down & PAD_TRIGGER_R) ret = 1000;
 	}
-	if (ret == 300) main_row = 0;
-	if (ret == 400) main_row = 1;
 	ui_main_select(-1);
 	if (ret != 500) WaitRelease();
 	return ret;
@@ -440,11 +504,12 @@ int ChooseDevice(const u8 *devices, int count)
 	ui_screen(UI_MAIN);
 	ui_main_select(-1);
 	UpdateMainCards();
-	ui_overlay(UI_OVERLAY_DEVICES, "Choose a device");
+	ui_action(NULL, 0);
+	ui_overlay(UI_OVERLAY_DEVICES, "Choose the SD card");
 	for (int i = 0; i < count && i < UI_OVERLAY_ROWS; i++) ui_overlay_row(i, DeviceName(devices[i]), NULL);
 	ui_overlay_rows(count);
 	ui_overlay_select(sel);
-	writeStatusBar("Which SD card should GCMM use?", "A: Choose");
+	writeStatusBar("Which SD card adapter should GCMM exFAT use?", "A: Choose");
 	WaitRelease();
 	for (;;) {
 		read_pad();
@@ -461,287 +526,106 @@ int ChooseDevice(const u8 *devices, int count)
 
 /* ============================================================ save lists */
 
-static char list_mode[32];
-static int page_kind[PAGESIZE];
+#define ROWS UI_LIST_ROWS
 
-/* Switches to the list screen for one of the modes (Back up, Restore...) */
-void ListBegin(const char *mode_name)
+static int chosen(int *blocks)
 {
-	snprintf(list_mode, sizeof(list_mode), "%s", mode_name);
-	ui_list_clear();
-	ui_info_clear();
-	ui_list_scroll(0, 0, 0);
-	ui_list_header("", list_mode);
-	ui_screen(UI_LIST);
-	offsetchanged = true;
+	int n = 0, b = 0;
+	for (int i = 0; i < save_count; i++)
+		if (save_rows[i].checked && !save_rows[i].folder) { n++; b += save_rows[i].blocks; }
+	if (blocks) *blocks = b;
+	return n;
 }
 
-static int is_folder(int i)
+static void pick_status(const PickSpec *ps)
 {
-	if (!displaypath) return 0;   /* the memory card has no folders */
-	char folder[1024];
-	snprintf(folder, sizeof(folder), "%s:/%s/%s", fatpath, currFolder, (char*)filelist[i]);
-	return isdir_sd(folder) == 1;
-}
-
-static void hexline(char *out, size_t n, const u8 *b, int count)
-{
-	out[0] = 0;
-	for (int i = 0; i < count; i++) snprintf(out + i * 2, n - i * 2, "%02X", b[i]);
-}
-
-/* The card image chosen for a whole-card restore, beside the card in the slot */
-static void showCardInfo(int sel, int folder)
-{
-	char txt[64], a[32], b[32];
-	int i;
-
-	ui_info_clear();
-	if (folder) {
-		ui_info_title((char*)filelist[sel]);
-		ui_info_folder(true);
-		ui_info_row(0, "Folder", "Press A to open");
+	char l1[96], act[48];
+	int blocks, n = ps->verb ? chosen(&blocks) : 0;
+	if (!n) {
+		ui_action(NULL, 0);
+		writeStatusBar((char *)ps->hint, (char *)ps->where);
 		return;
 	}
-
-	/* block 1 of the image goes into cardheader */
-	SDLoadCardImageHeader((char*)filelist[sel]);
-	u64 serial1[4];
-	for (i = 0; i < 4; i++) memcpy(&serial1[i], (u8*)&cardheader + (8*i), sizeof(u64));
-	u64 serialA = serial1[0]^serial1[1]^serial1[2]^serial1[3];
-	getserial(imageserial);
-
-	ui_info_title("Card image");
-	hexline(a, sizeof(a), imageserial, 6);
-	hexline(b, sizeof(b), imageserial + 6, 6);
-	ui_info_row(0, "Flash ID", a);
-	ui_info_row(1, "", b);
-	snprintf(txt, sizeof(txt), "%016llX", serialA);
-	ui_info_row(2, "Serial", txt);
-	snprintf(txt, sizeof(txt), "%d blocks", (cardheader.SizeMb[1]*16)-5);
-	ui_info_row(3, "Size", txt);
-
-	/* mounting the card makes the SRAM's copy of its flash ID readable */
-	u64 cardserialno = Card_SerialNo(MEM_CARD);
-	sramex = __SYS_LockSramEx();
-	__SYS_UnlockSramEx(0);
-
-	hexline(a, sizeof(a), sramex->flash_id[MEM_CARD], 6);
-	hexline(b, sizeof(b), sramex->flash_id[MEM_CARD] + 6, 6);
-	ui_info_row(4, MEM_CARD ? "Card B ID" : "Card A ID", a);
-	ui_info_row(5, "", b);
-	snprintf(txt, sizeof(txt), "%016llX", cardserialno);
-	ui_info_row(6, "Serial", txt);
-	snprintf(txt, sizeof(txt), "%d blocks", (memsize*16)-5);
-	ui_info_row(7, "Size", txt);
+	snprintf(l1, sizeof(l1), "%d save%s chosen" DOT "%d block%s", n, n == 1 ? "" : "s", blocks, blocks == 1 ? "" : "s");
+	snprintf(act, sizeof(act), "%s %d save%s", ps->verb, n, n == 1 ? "" : "s");
+	writeStatusBar(l1, (char *)ps->where);
+	ui_action(act, 'X');
 }
 
-static void comment_line(char *out, int from)
+static void pick_page(int offset)
 {
-	int j;
-	for (j = 0; j < 32; j++) {
-		char c = (char)CommentBuffer[from + j];
-		if (c == 0 || c == 10) break;
-		out[j] = c;
-	}
-	out[j] = 0;
-	/* trailing spaces */
-	while (j > 0 && out[j - 1] == ' ') out[--j] = 0;
-}
-
-static void showSaveInfo(int sel, int folder)
-{
-	char gamecode[5], company[3], txt[96];
-
-	ui_info_clear();
-	if (folder) {
-		ui_info_title((char*)filelist[sel]);
-		ui_info_folder(true);
-		ui_info_row(0, "Folder", "Press A to open");
-		return;
-	}
-
-	if (mode == RESTORE_MODE)
-	{
-		SDLoadMCImageHeader((char*)filelist[sel]);
-		memcpy(company, gci.company, 2);
-		memcpy(gamecode, gci.gamecode, 4);
-	}
-	else
-	{
-		memcpy(company, CardList[sel].company, 2);
-		memcpy(gamecode, CardList[sel].gamecode, 4);
-		CardReadFileHeader(MEM_CARD, sel);
-	}
-	company[2] = gamecode[4] = 0;
-
-	/* the banner (the icon follows from ShowSelector, a frame at a time) */
-	if (SDCARD_GetBannerFmt(gci.banner_fmt) == CARD_BANNER_RGB)
-		bannerloadRGB(bannerdata);
-	else if (SDCARD_GetBannerFmt(gci.banner_fmt) == CARD_BANNER_CI)
-		bannerloadCI(bannerdataCI, tlutbanner);
-
-	char comment1[33], comment2[33];
-	comment_line(comment1, 0);
-	comment_line(comment2, 32);
-	if (comment1[0]) ui_info_title(comment1);
-	else { snprintf(txt, sizeof(txt), "%s%s", gamecode, company); ui_info_title(txt); }
-
-	int r = 0;
-	if (comment2[0]) ui_info_row(r++, "Details", comment2);
-	snprintf(txt, sizeof(txt), "%s%s", gamecode, company);
-	ui_info_row(r++, "Game ID", txt);
-
-	/* gci.last_modified counts seconds from Jan 1, 2000 */
-	u32 t = gci.last_modified + 946684800;
-	static const char monthstr[12][4] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-	/* Fliegel & van Flandern (1968), Communications of the ACM 11(10) */
-	int I, J, K, L, N;
-	L = t / 86400 + 2509157;
-	N = 4 * L / 146097;
-	L = L - (146097 * N + 3) / 4;
-	I = 4000 * (L + 1) / 1461001;
-	L = L - 1461 * I / 4 + 31;
-	J = 80 * L / 2447;
-	K = L - 2447 * J / 80;
-	L = J / 11;
-	J = J + 2 - 12 * L;
-	I = 100 * (N - 49) + I + L;
-	int year = I, month = J, day = K;
-	int min = (t / 60) % 60, hour = (t / 3600) % 24;
-	if (month < 1 || month > 12) month = 1;
-	snprintf(txt, sizeof(txt), "%s %d, %04d  %02d:%02d", monthstr[month-1], day, year, hour, min);
-	ui_info_row(r++, "Saved", txt);
-
-	snprintf(txt, sizeof(txt), "%d (%d free)", gci.length, FreeBlocks(MEM_CARD));
-	ui_info_row(r++, "Blocks", txt);
-
-	snprintf(txt, sizeof(txt), "%s%s%s",
-	         (gci.permission & 4) ? "Public" : "Private",
-	         (gci.permission & 8) ? ", no copying" : "",
-	         (gci.permission & 16) ? ", no moving" : "");
-	ui_info_row(r++, "Access", txt);
-	snprintf(txt, sizeof(txt), "%d", gci.copy_times);
-	ui_info_row(r++, "Copied", txt);
-	ui_info_row(r++, "File", (char*)filelist[sel]);
-}
-
-/* the list's rows for the page starting at offset */
-static void ShowPage(int offset)
-{
+	char blocks[16];
+	saves_look(offset, ROWS);   /* (SD rows: looked at as they're shown) */
 	ui_list_clear();
-	for (int i = 0; i < PAGESIZE; i++) {
+	for (int i = 0; i < ROWS; i++) {
 		int n = offset + i;
-		if (n >= (int)maxfile) { page_kind[i] = -1; continue; }
-		page_kind[i] = is_folder(n) ? UI_ITEM_FOLDER : (displaypath ? UI_ITEM_FILE : UI_ITEM_SAVE);
-		ui_list_row(i, (char*)filelist[n], page_kind[i]);
+		if (n >= save_count) { ui_list_icon(i, NULL); continue; }
+		SaveRow *r = &save_rows[n];
+		blocks[0] = 0;
+		if (r->blocks > 0 && !r->folder) snprintf(blocks, sizeof(blocks), "%d block%s", r->blocks, r->blocks == 1 ? "" : "s");
+		ui_list_row(i, r->title, r->detail, blocks, r->folder ? UI_ST_NONE : r->status, r->checked, r->folder);
+		ui_list_icon(i, r->has_icon ? r->icon : NULL);
 	}
-}
-
-static void ShowFiles (int offset, int selection, int saveinfo)
-{
-	char path[300];
-	if (displaypath) snprintf(path, sizeof(path), "%s:/%s/", fatpath, currFolder);
-	else snprintf(path, sizeof(path), "Memory Card %c", MEM_CARD ? 'B' : 'A');
-	ui_list_header(path, list_mode);
-
-	if (offsetchanged) {
-		offsetchanged = false;
-		ShowPage(offset);
-	}
-	ui_list_select(selection - offset);
-	ui_list_scroll(offset, PAGESIZE, maxfile);
-
-	int folder = page_kind[selection - offset] == UI_ITEM_FOLDER;
-	if (saveinfo) showSaveInfo(selection, folder);
-	else showCardInfo(selection, folder);
+	ui_list_scroll(offset, ROWS, save_count);
 }
 
 /****************************************************************************
-* ShowSelector
+* PickList
 *
-* Lets the user choose a file to back up or restore. Returns its index, or
-* -1 with cancel set (B) or doall set (R).
-* saveinfo 1: shows the save's details (saves)
-* saveinfo 0: shows the card image's details (whole-card restore)
+* The list of save_rows, with tick boxes when ps->verb is set: A ticks a save
+* (or opens a folder), Y ticks them all (or none), X does the job with the
+* ticked ones. Without tick boxes A chooses a row. Returns PICK_GO (X),
+* PICK_OPEN (A on a folder, or a row chosen; *sel says which) or PICK_BACK.
 ****************************************************************************/
-int ShowSelector (int saveinfo)
+int PickList(const PickSpec *ps, int *sel)
 {
-	int redraw = 1;
-	int offset = 0;
-	int selection = 0;
-	int currframe = 0;
-	int i;
-
-	offsetchanged = true;
+	int selection = *sel, offset = -1;
+	if (selection < 0 || selection >= save_count) selection = 0;
+	ui_screen(UI_LIST);
+	ui_list_header(ps->title, ps->right);
+	ui_list_checkable(ps->verb != NULL);
+	ui_progress(-1);
+	pick_status(ps);
 	WaitRelease();
-
 	for (;;)
 	{
-		if (redraw)
-		{
-			if (saveinfo) {
-				memset((u8*)bannerdata, 0, CARD_BANNER_W*CARD_BANNER_H*2);
-				memset((u8*)bannerdataCI, 0, CARD_BANNER_W*CARD_BANNER_H);
-				memset((u8*)icondata, 0, 8*1024);
-				memset((u8*)icondataRGB, 0, 8*1024*2);
-				memset((u8*)tlut, 0, 9*512);
-				memset((u8*)tlutbanner, 0, 512);
-			}
-			int new_offset = (selection / PAGESIZE) * PAGESIZE;
-			if (new_offset != offset) { offset = new_offset; offsetchanged = true; }
-			ShowFiles (offset, selection, saveinfo);
-			redraw = 0;
-		}
-
-		/* the save's animated icon */
-		if (lastframe && saveinfo && page_kind[selection - offset] != UI_ITEM_FOLDER)
-		{
-			currframe = retraceCount % lastframe;
-			for (i = 0; i < 2 * CARD_MAXICONS - 2; ++i)
-				if (currframe < frametable[i]) break;
-			currframe = i;
-			int fmt = SDCARD_GetIconFmt(gci.icon_fmt, iconindex[currframe]);
-			if (fmt == 1) iconloadCI(icondata[iconindex[currframe]], tlut[8]);           /* shared palette */
-			else if (fmt == 3) iconloadCI(icondata[iconindex[currframe]], tlut[iconindex[currframe]]);
-			else if (fmt == 2) iconloadRGB(icondataRGB[iconindex[currframe]]);
-		}
+		int new_offset = (selection / ROWS) * ROWS;
+		if (new_offset != offset) { offset = new_offset; pick_page(offset); }
+		ui_list_select(save_count ? selection - offset : -1);
 
 		read_pad();
-
-		if (pad_down & PAD_BUTTON_B)
-		{
-			offsetchanged = true;
-			cancel = 1;
-			lastframe = 0;
-			return -1;
+		if (pad_down & PAD_BUTTON_B) { *sel = selection; WaitRelease(); return PICK_BACK; }
+		if ((pad_down & PAD_BUTTON_X) && ps->verb && chosen(NULL)) { *sel = selection; ui_action(NULL, 0); WaitRelease(); return PICK_GO; }
+		if ((pad_down & PAD_BUTTON_Y) && ps->verb) {
+			/* all of them, or none if they all are */
+			bool all = true;
+			for (int i = 0; i < save_count; i++) if (!save_rows[i].folder && !save_rows[i].checked) all = false;
+			for (int i = 0; i < save_count; i++) if (!save_rows[i].folder) save_rows[i].checked = !all;
+			pick_page(offset);
+			pick_status(ps);
 		}
-		if (pad_down & PAD_TRIGGER_R)
-		{
-			doall = 1;
-			lastframe = 0;
-			return -1;
-		}
-		if (pad_down & PAD_BUTTON_A)
-		{
-			lastframe = 0;
-			return selection;
+		if ((pad_down & PAD_BUTTON_A) && save_count) {
+			SaveRow *r = &save_rows[selection];
+			if (r->folder || !ps->verb) { *sel = selection; WaitRelease(); return PICK_OPEN; }
+			r->checked = !r->checked;
+			pick_page(offset);
+			pick_status(ps);
 		}
 
 		u32 step = dpad_step();
-		if (!maxfile || !step) continue;
+		if (!save_count || !step) continue;
 		int jump = (step & PAD_BUTTON_DOWN) ? 1 : (step & PAD_BUTTON_UP) ? -1 :
-		           (step & PAD_BUTTON_RIGHT) ? PAGESIZE : -PAGESIZE;
+		           (step & PAD_BUTTON_RIGHT) ? ROWS : -ROWS;
 		int next = selection + jump;
 		if (jump == 1 || jump == -1) {
 			/* up and down wrap around */
-			if (next >= (int)maxfile) next = 0;
-			if (next < 0) next = maxfile - 1;
+			if (next >= save_count) next = 0;
+			if (next < 0) next = save_count - 1;
 		} else {
 			/* left and right move a page, stopping at the ends */
-			if (next >= (int)maxfile) next = maxfile - 1;
+			if (next >= save_count) next = save_count - 1;
 			if (next < 0) next = 0;
 		}
-		if (next != selection) { selection = next; redraw = 1; }
+		selection = next;
 	}
 }

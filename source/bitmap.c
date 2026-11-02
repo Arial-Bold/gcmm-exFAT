@@ -1,19 +1,22 @@
 /****************************************************************************
  * bitmap.c
  *
- * Hands a save's banner and icon (decoded by bannerload.c into rows of blue,
- * green, red bytes) to the screen.
+ * Keeps the last banner and icon decoded by bannerload.c (rows of blue,
+ * green, red bytes), for the save lists to pick up.
  ****************************************************************************/
 #include <gccore.h>
+#include <string.h>
 #include "bitmap.h"
-#include "ui.h"
+
+u8 decoded_banner[96 * 32 * 3];
+u8 decoded_icon[32 * 32 * 3];
 
 void ShowBanner(u8 *banner)
 {
-	ui_info_banner_rgb(banner);   /* 96x32 */
+	memcpy(decoded_banner, banner, sizeof(decoded_banner));
 }
 
 void ShowIcon(u8 *icon)
 {
-	ui_info_icon_rgb(icon);       /* 32x32 */
+	memcpy(decoded_icon, icon, sizeof(decoded_icon));
 }

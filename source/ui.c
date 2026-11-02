@@ -64,7 +64,7 @@ void ui_settings_save(void) {
 	if (slash && slash > strchr(dir, ':') + 1) { *slash = 0; mkdir(dir, 0777); }
 	FILE *f = fopen(settings_file, "w");
 	if (!f) return;
-	fprintf(f, "# GCMM settings\n");
+	fprintf(f, "# GCMM exFAT settings\n");
 	fprintf(f, "display.resolution=%d\n", ui_set.resolution);
 	fprintf(f, "display.widescreen=%d\n", ui_set.widescreen);
 	fprintf(f, "display.full_width=%d\n", ui_set.full_width);
@@ -76,24 +76,25 @@ void ui_settings_save(void) {
 
 #define TXT 96
 typedef struct { char label[48]; char value[TXT]; } Pair;
+typedef struct { char title[40], detail[40], blocks[16]; int status, checked; bool folder, has_icon; } Row;
 
 static struct {
 	int screen;
 	char title_info[64];
 	char splash[TXT];
 	char status1[TXT], status2[TXT];
-	/* main */
+	char action[48], action_key;
+	float progress;
+	/* header */
 	char mc_name[32], mc_info[48], sd_name[32], sd_info[48];
+	/* main */
 	int main_sel;
 	/* list */
-	char list_path[TXT], list_mode[32];
-	char rows[UI_LIST_ROWS][TXT];
-	int row_kind[UI_LIST_ROWS];
+	char list_title[TXT], list_right[48];
+	bool checkable;
+	Row rows[UI_LIST_ROWS];
 	int row_used, list_sel;
 	int scroll_first, scroll_count, scroll_total;
-	char info_title[TXT];
-	Pair info[UI_INFO_ROWS];
-	bool info_folder, has_banner, has_icon;
 	/* overlay */
 	int overlay;
 	char overlay_title[48];
@@ -113,6 +114,8 @@ void ui_screen(int s) { L(); if (sc.screen != s) shown_at = now_ms(); sc.screen 
 void ui_title_info(const char *t) { L(); cpy(sc.title_info, t, sizeof(sc.title_info)); U(); }
 void ui_splash_text(const char *t) { L(); cpy(sc.splash, t, sizeof(sc.splash)); U(); }
 void ui_status(const char *a, const char *b) { L(); cpy(sc.status1, a, TXT); cpy(sc.status2, b, TXT); U(); }
+void ui_action(const char *label, char key) { L(); cpy(sc.action, label, sizeof(sc.action)); sc.action_key = key; U(); }
+void ui_progress(float f) { L(); sc.progress = f; U(); }
 void ui_main_cards(const char *mn, const char *mi, const char *sn, const char *si) {
 	L();
 	cpy(sc.mc_name, mn, sizeof(sc.mc_name)); cpy(sc.mc_info, mi, sizeof(sc.mc_info));
@@ -120,24 +123,20 @@ void ui_main_cards(const char *mn, const char *mi, const char *sn, const char *s
 	U();
 }
 void ui_main_select(int r) { L(); sc.main_sel = r; U(); }
-void ui_list_header(const char *p, const char *m) { L(); cpy(sc.list_path, p, TXT); cpy(sc.list_mode, m, sizeof(sc.list_mode)); U(); }
-void ui_list_clear(void) { L(); sc.row_used = 0; sc.list_sel = -1; U(); }
-void ui_list_row(int r, const char *n, int kind) {
+void ui_list_header(const char *t, const char *r) { L(); cpy(sc.list_title, t, TXT); cpy(sc.list_right, r, sizeof(sc.list_right)); U(); }
+void ui_list_clear(void) { L(); sc.row_used = 0; sc.list_sel = -1; memset(sc.rows, 0, sizeof(sc.rows)); U(); }
+void ui_list_checkable(bool on) { L(); sc.checkable = on; U(); }
+void ui_list_row(int r, const char *title, const char *detail, const char *blocks, int status, int checked, bool folder) {
 	if (r < 0 || r >= UI_LIST_ROWS) return;
-	L(); cpy(sc.rows[r], n, TXT); sc.row_kind[r] = kind; if (r + 1 > sc.row_used) sc.row_used = r + 1; U();
+	L();
+	Row *w = &sc.rows[r];
+	cpy(w->title, title, sizeof(w->title)); cpy(w->detail, detail, sizeof(w->detail)); cpy(w->blocks, blocks, sizeof(w->blocks));
+	w->status = status; w->checked = checked; w->folder = folder;
+	if (r + 1 > sc.row_used) sc.row_used = r + 1;
+	U();
 }
 void ui_list_select(int r) { L(); sc.list_sel = r; U(); }
 void ui_list_scroll(int f, int c, int t) { L(); sc.scroll_first = f; sc.scroll_count = c; sc.scroll_total = t; U(); }
-void ui_info_clear(void) {
-	L(); sc.info_title[0] = 0; memset(sc.info, 0, sizeof(sc.info)); sc.info_folder = sc.has_banner = sc.has_icon = false; U();
-}
-void ui_info_title(const char *t) { L(); cpy(sc.info_title, t, TXT); U(); }
-void ui_info_row(int r, const char *l, const char *v) {
-	if (r < 0 || r >= UI_INFO_ROWS) return;
-	L(); cpy(sc.info[r].label, l, sizeof(sc.info[r].label)); cpy(sc.info[r].value, v, TXT); U();
-}
-void ui_info_folder(bool f) { L(); sc.info_folder = f; U(); }
-void ui_info_no_pictures(void) { L(); sc.has_banner = sc.has_icon = false; U(); }
 void ui_overlay(int o, const char *t) { L(); sc.overlay = o; cpy(sc.overlay_title, t, sizeof(sc.overlay_title)); sc.orow_count = 0; sc.osel = 0; U(); }
 void ui_overlay_row(int r, const char *l, const char *v) {
 	if (r < 0 || r >= UI_OVERLAY_ROWS) return;
@@ -146,11 +145,10 @@ void ui_overlay_row(int r, const char *l, const char *v) {
 void ui_overlay_select(int r) { L(); sc.osel = r; U(); }
 void ui_overlay_rows(int n) { L(); sc.orow_count = n; U(); }
 
-/* --------------------------------------------- the save's banner and icon */
+/* ------------------------------------------------------- the rows' icons */
 
 /* RGBA8 textures, written by the memory card code and drawn by the thread */
-static u8 banner_tex[96 * 32 * 4] __attribute__((aligned(32)));
-static u8 icon_tex[32 * 32 * 4] __attribute__((aligned(32)));
+static u8 icon_tex[UI_LIST_ROWS][32 * 32 * 4] __attribute__((aligned(32)));
 
 static void bgr_to_rgba8(const u8 *bgr, int w, int h, u8 *out) {
 	u8 *p = out;
@@ -170,8 +168,13 @@ static void bgr_to_rgba8(const u8 *bgr, int w, int h, u8 *out) {
 	DCFlushRange(out, w * h * 4);
 }
 
-void ui_info_banner_rgb(const u8 *bgr) { L(); bgr_to_rgba8(bgr, 96, 32, banner_tex); sc.has_banner = true; U(); }
-void ui_info_icon_rgb(const u8 *bgr) { L(); bgr_to_rgba8(bgr, 32, 32, icon_tex); sc.has_icon = true; U(); }
+void ui_list_icon(int r, const u8 *bgr) {
+	if (r < 0 || r >= UI_LIST_ROWS) return;
+	L();
+	if (bgr) { bgr_to_rgba8(bgr, 32, 32, icon_tex[r]); sc.rows[r].has_icon = true; }
+	else sc.rows[r].has_icon = false;
+	U();
+}
 
 /* ================================================================== video */
 
@@ -378,7 +381,7 @@ static void shadow(float x, float y, float w, float h, float r, float spread, Co
 
 /* ---------------------------------------------------------- textures */
 
-static GXTexObj tex_font_small, tex_font_large, tex_logo_title, tex_logo_splash, tex_card_mc, tex_card_sd, tex_card_file, tex_banner, tex_icon;
+static GXTexObj tex_font_small, tex_font_large, tex_logo_title, tex_logo_splash, tex_card_mc, tex_card_sd, tex_card_file, tex_icon[UI_LIST_ROWS];
 
 static void tex_init(GXTexObj *t, const void *data, int w, int h, u8 fmt) {
 	DCFlushRange((void *)data, GX_GetTexBufferSize(w, h, fmt, GX_FALSE, 0));
@@ -394,15 +397,6 @@ static void image(GXTexObj *t, float x, float y, float w, float h, float tw, flo
 	vtx(x, y, c, 0, 0); vtx(x + w, y, c, s1, 0); vtx(x + w, y + h, c, s1, t1); vtx(x, y + h, c, 0, t1);
 	GX_End();
 }
-/* part of a texture (in its own pixels) */
-static void image_part(GXTexObj *t, int tw, int th, float sx, float sy, float sw, float sh, float x, float y, float w, float h, Color c) {
-	mode_tex(t, false);
-	float s0 = sx / tw, t0 = sy / th, s1 = (sx + sw) / tw, t1 = (sy + sh) / th;
-	GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
-	vtx(x, y, c, s0, t0); vtx(x + w, y, c, s1, t0); vtx(x + w, y + h, c, s1, t1); vtx(x, y + h, c, s0, t1);
-	GX_End();
-}
-
 /* ---------------------------------------------------------------- text */
 
 static const UiFont *font_for(float size, GXTexObj **t) {
@@ -496,21 +490,6 @@ static void desc_bar(float x, float y, float w, float h) {
 
 static void rule(float x, float y, float w) { rect(x, y, w, 1, rgba(200, 210, 230, 70)); }
 
-/* A round button (A, B, X, Y) or a pill (L, R, Z, START) for the controls list */
-static void button_round(float cx, float cy, const char *l, Color body, Color label) {
-	circle(cx, cy, 9, rgba(10, 12, 16, 230));
-	circle(cx, cy, 8, body);
-	rect_v(cx - 5, cy - 7, 10, 6, rgba(255, 255, 255, 80), rgba(255, 255, 255, 0));
-	text(cx, cy, l, 10, label, 1, 0);
-}
-static void button_pill(float cx, float cy, const char *l) {
-	float w = text_width(l, 9) + 14;
-	if (w < 26) w = 26;
-	rrect_v(cx - w / 2 - 1, cy - 7, w + 2, 14, 7, rgba(10, 12, 16, 230), rgba(10, 12, 16, 230));
-	rrect_v(cx - w / 2, cy - 6, w, 12, 6, rgba(222, 226, 234, 255), rgba(176, 184, 196, 255));
-	text(cx, cy, l, 9, rgba(30, 34, 40, 255), 1, 0);
-}
-
 /* ------------------------------------------------- the TV-screen backdrop
  * CubeVerse's "soft phosphor" screen: a deep blue-black, a cool glow, soft
  * scanlines bowed by the curve of the glass and a dark tube-shaped edge.
@@ -603,116 +582,172 @@ static void backdrop(void) {
 
 /* =============================================================== screens */
 
-static void title_bar(void) {
-	panel(18, 14, 604, 44);
-	image(&tex_logo_title, 30, 18, LOGO_TITLE_W, LOGO_TITLE_H, 0, 0, rgba(255, 255, 255, 255));
-	text(604, 36, sc.title_info, 11, SOFT, 2, 300);
+/* the header: the logo, and the memory card and SD card at the right */
+static float chip(float right, float y, GXTexObj *pic, float pw, float ph, const char *name, const char *info, bool on) {
+	float w = 40 + fmaxf(text_width(name, 11), text_width(info, 10));
+	if (w > 200) w = 200;
+	float x = right - w;
+	rrect_v(x, y, w, 32, 6, rgba(10, 14, 20, 170), rgba(10, 14, 20, 170));
+	outline(x, y, w, 32, 6, 1, rgba(200, 210, 230, 70));
+	image(pic, x + 8, y + 16 - ph / 2, pw, ph, 0, 0, rgba(255, 255, 255, on ? 255 : 110));
+	text(x + 30, y + 10, name, 11, on ? TEXT : DIM, 0, w - 36);
+	text(x + 30, y + 23, info, 10, SOFT, 0, w - 36);
+	return w;
 }
 
-static void status_bar(void) {
-	desc_bar(18, 408, 604, 56);
-	text(34, 426, sc.status1, 13, TEXT, 0, 572);
-	text(34, 446, sc.status2, 11, SOFT, 0, 572);
+static void header(void) {
+	image(&tex_logo_title, 22, 14, LOGO_TITLE_W, LOGO_TITLE_H, 0, 0, rgba(255, 255, 255, 255));
+	float w = chip(618, 16, &tex_card_sd, 14, 18, sc.sd_name[0] ? sc.sd_name : "No SD card", sc.sd_info, sc.sd_name[0] != 0);
+	chip(618 - w - 8, 16, &tex_card_mc, 14, 18, sc.mc_name, sc.mc_info, true);
 }
 
-static void controls_panel(void) {
-	panel(372, 72, 240, 320);
-	text(384, 88, "Controls", 13, TITLE, 0, 0);
-	rule(384, 99, 216);
-	static const struct { const char *a, *b, *label; char kind; } rows[] = {
-		{ "A", NULL, "OK", 'a' }, { "B", NULL, "Cancel", 'b' }, { "Y", NULL, "Back up save", 'w' }, { "X", NULL, "Restore save", 'w' },
-		{ "Z", NULL, "Delete save", 'p' }, { "L", "Y", "Back up whole card", 'l' }, { "L", "X", "Restore whole card", 'l' },
-		{ "L", "Z", "Format card", 'L' }, { "R", NULL, "Choose device", 'p' }, { "START", NULL, "Settings", 'p' },
-	};
-	for (int i = 0; i < 10; i++) {
-		float y = 116 + i * 27, x = 400;
-		switch (rows[i].kind) {
-		case 'a': button_round(x, y, "A", rgba(60, 190, 110, 255), rgba(255, 255, 255, 255)); break;
-		case 'b': button_round(x, y, "B", rgba(220, 70, 80, 255), rgba(255, 255, 255, 255)); break;
-		case 'w': button_round(x, y, rows[i].a, rgba(214, 218, 226, 255), rgba(30, 34, 40, 255)); break;
-		case 'p': button_pill(x + 6, y, rows[i].a); break;
-		case 'l': button_pill(x + 4, y, "L"); text(x + 27, y, "+", 10, SOFT, 1, 0); button_round(x + 42, y, rows[i].b, rgba(214, 218, 226, 255), rgba(30, 34, 40, 255)); break;
-		case 'L': button_pill(x + 4, y, "L"); text(x + 27, y, "+", 10, SOFT, 1, 0); button_pill(x + 46, y, "Z"); break;
-		}
-		text(470, y, rows[i].label, 11, TEXT, 0, 136);
+/* A round button (A, B, X, Y, Z) */
+static void button_round(float cx, float cy, const char *l, Color body, Color label) {
+	circle(cx, cy, 9, rgba(10, 12, 16, 230));
+	circle(cx, cy, 8, body);
+	rect_v(cx - 5, cy - 7, 10, 6, rgba(255, 255, 255, 80), rgba(255, 255, 255, 0));
+	text(cx, cy, l, 10, label, 1, 0);
+}
+static void key_button(float cx, float cy, char k) {
+	char l[2] = { k, 0 };
+	switch (k) {
+	case 'A': button_round(cx, cy, l, rgba(60, 190, 110, 255), rgba(255, 255, 255, 255)); break;
+	case 'B': button_round(cx, cy, l, rgba(220, 70, 80, 255), rgba(255, 255, 255, 255)); break;
+	case 'Z': button_round(cx, cy, l, rgba(140, 120, 240, 255), rgba(255, 255, 255, 255)); break;
+	default: button_round(cx, cy, l, rgba(214, 218, 226, 255), rgba(30, 34, 40, 255)); break;
 	}
-	text(492, 380, "hold START: Exit to Launcher", 9, DIM, 1, 220);
 }
 
-static void arrows(void) {
-	tri(160, 176, 182, 164, 182, 188, GOLD); rect(181, 171, 27, 10, GOLD);
-	tri(232, 196, 210, 184, 210, 208, GOLD_HI); rect(184, 191, 27, 10, GOLD_HI);
+/* the description bar along the bottom, with the action's button (or a progress bar) at its right */
+static void status_bar(void) {
+	desc_bar(22, 374, 596, 52);
+	float tw = 572;
+	if (sc.progress >= 0) {
+		float bx = 418, bw = 184, by = 397;
+		rrect_v(bx, by, bw, 8, 3, rgba(0, 0, 0, 140), rgba(0, 0, 0, 140));
+		float f = clamp01(sc.progress);
+		if (f > 0) rrect_v(bx, by, bw * f, 8, 3, rgba(255, 232, 138, 255), rgba(216, 176, 48, 255));
+		tw = 370;
+	} else if (sc.action[0]) {
+		float bw = text_width(sc.action, 12) + 54, bx = 606 - bw, by = 384, bh = 32;
+		rrect_v(bx, by, bw, bh, 4, rgba(72, 184, 240, 255), rgba(42, 146, 216, 255));
+		outline(bx, by, bw, bh, 4, 1, rgba(215, 225, 240, 120));
+		key_button(bx + 18, by + bh / 2, sc.action_key);
+		text(bx + 34, by + bh / 2, sc.action, 12, rgba(255, 255, 255, 255), 0, 0);
+		tw = bx - 50;
+	}
+	text(38, 391, sc.status1, 13, TEXT, 0, tw);
+	text(38, 410, sc.status2, 11, rgba(200, 205, 240, 255), 0, tw);
+}
+
+/* the main screen's pictures */
+static void card_pair(float cx, float cy, bool to_sd) {
+	GXTexObj *a = to_sd ? &tex_card_mc : &tex_card_sd, *b = to_sd ? &tex_card_sd : &tex_card_mc;
+	image(a, cx - 64, cy - 30, 44, 58, 0, 0, rgba(255, 255, 255, 255));
+	image(b, cx + 20, cy - 30, 44, 58, 0, 0, rgba(255, 255, 255, 255));
+	tri(cx + 12, cy - 1, cx + 2, cy - 9, cx + 2, cy + 7, GOLD);
+	rect(cx - 12, cy - 4, 15, 6, GOLD);
+}
+static void gear(float cx, float cy, float r, Color c, Color hole) {
+	for (int i = 0; i < 8; i++) {
+		float a = i * 3.14159265f / 4, x = cx + cosf(a) * r, y = cy + sinf(a) * r;
+		rrect_v(x - r * 0.28f, y - r * 0.28f, r * 0.56f, r * 0.56f, 2, c, c);
+	}
+	circle(cx, cy, r * 0.92f, c);
+	circle(cx, cy, r * 0.38f, hole);
 }
 
 static void main_screen(void) {
-	panel(30, 72, 310, 320);
-	image(&tex_card_mc, 70, 140, 70, 92, 0, 0, rgba(255, 255, 255, 255));
-	arrows();
-	image(&tex_card_sd, 240, 146, 62, 82, 0, 0, rgba(255, 255, 255, sc.sd_name[0] ? 255 : 110));
-	text(105, 250, sc.mc_name, 12, TEXT, 1, 140);
-	text(271, 250, sc.sd_name[0] ? sc.sd_name : "No SD card", 12, TEXT, 1, 140);
-	text(105, 266, sc.mc_info, 10, SOFT, 1, 140);
-	text(271, 266, sc.sd_info, 10, SOFT, 1, 140);
-	static const char *rows[2] = { "Saves on the memory card", "Saves on the SD card" };
-	for (int i = 0; i < 2; i++) {
-		float y = 296 + i * 34;
-		frost(52, y, 266, 26);
-		if (sc.main_sel == i && sc.overlay == UI_OVERLAY_NONE) gold_ring(52, y, 266, 26);
-		text(64, y + 13, rows[i], 12, TEXT, 0, 244);
+	text(320, 86, "What would you like to do?", 17, TEXT, 1, 0);
+	static const char *names[3] = { "Back up", "Restore", "Card tools" };
+	static const char *desc[3][2] = { { "Copy saves from the memory", "card to the SD card" },
+	                                  { "Put saves from the SD card", "back on the memory card" },
+	                                  { "Whole-card backups,", "format, delete saves" } };
+	for (int i = 0; i < 3; i++) {
+		float x = 34 + i * 194, y = 116, w = 180, h = 236, cx = x + w / 2, cy = y + 82;
+		panel(x, y, w, h);
+		if (i < 2) card_pair(cx, cy, i == 0);
+		else {
+			image(&tex_card_mc, cx - 40, cy - 32, 44, 58, 0, 0, rgba(255, 255, 255, 255));
+			gear(cx + 18, cy + 12, 18, rgba(214, 218, 226, 255), rgba(36, 46, 56, 255));
+		}
+		text(cx, y + 150, names[i], 20, TEXT, 1, w - 16);
+		text(cx, y + 174, desc[i][0], 11, SOFT, 1, w - 16);
+		text(cx, y + 190, desc[i][1], 11, SOFT, 1, w - 16);
+		if (sc.main_sel == i && sc.overlay == UI_OVERLAY_NONE) gold_ring(x, y, w, h);
 	}
-	controls_panel();
+}
+
+static void folder_glyph(float x, float y) {
+	tri(x, y, x + 7, y, x + 9, y + 3, GOLD);
+	rect(x, y, 7, 3, GOLD);
+	rect(x, y + 3, 22, 14, GOLD);
+}
+
+static void status_chip(float right, float cy, int st) {
+	static const char *label[] = { "", "New", "Changed", "Backed up", "On card", "Not on card" };
+	if (st <= UI_ST_NONE || st > UI_ST_NOT_ON_CARD) return;
+	Color bg, fg;
+	switch (st) {
+	case UI_ST_NEW: case UI_ST_NOT_ON_CARD: bg = rgba(60, 190, 110, 210); fg = rgba(230, 255, 236, 255); break;
+	case UI_ST_CHANGED: bg = rgba(240, 140, 60, 220); fg = rgba(255, 244, 232, 255); break;
+	default: bg = rgba(80, 90, 110, 220); fg = rgba(205, 212, 224, 255); break;
+	}
+	float w = text_width(label[st], 10) + 16;
+	rrect_v(right - w, cy - 8, w, 16, 8, bg, bg);
+	text(right - w / 2, cy, label[st], 10, fg, 1, 0);
+}
+
+static void checkbox(float x, float cy, bool on) {
+	rrect_v(x, cy - 8, 16, 16, 3, on ? rgba(240, 244, 250, 255) : rgba(20, 28, 34, 255), on ? rgba(214, 222, 232, 255) : rgba(20, 28, 34, 255));
+	outline(x, cy - 8, 16, 16, 3, 1, rgba(215, 225, 240, 160));
+	if (on) {
+		/* the tick */
+		Color b = rgba(42, 146, 216, 255);
+		mode_color();
+		GX_Begin(GX_QUADS, GX_VTXFMT0, 8);
+		vtx(x + 3, cy, b, 0, 0); vtx(x + 5, cy - 2, b, 0, 0); vtx(x + 8, cy + 1, b, 0, 0); vtx(x + 7, cy + 4, b, 0, 0);
+		vtx(x + 7, cy + 4, b, 0, 0); vtx(x + 6, cy + 1, b, 0, 0); vtx(x + 12, cy - 5, b, 0, 0); vtx(x + 14, cy - 3, b, 0, 0);
+		GX_End();
+	}
 }
 
 static void list_screen(void) {
-	panel(30, 72, 310, 320);
-	text(42, 86, sc.list_path, 11, SOFT, 0, sc.list_mode[0] ? 200 : 290);
-	text(330, 86, sc.list_mode, 11, GOLD, 2, 90);
+	panel(22, 62, 596, 300);
+	text(34, 80, sc.list_title, 12, TITLE, 0, 380);
+	text(606, 80, sc.list_right, 11, SOFT, 2, 200);
+	rule(32, 92, 576);
+	bool box = sc.checkable;
 	for (int i = 0; i < sc.row_used; i++) {
-		float y = 98 + i * 29;
-		frost(40, y, 290, 25);
-		if (i == sc.list_sel && sc.overlay == UI_OVERLAY_NONE) gold_ring(40, y, 290, 25);
-		if (sc.row_kind[i] == UI_ITEM_FOLDER) {
-			tri(50, y + 7, 56, y + 7, 58, y + 9, GOLD);
-			rect(50, y + 7, 6, 2, GOLD);
-			rect(50, y + 9, 16, 10, GOLD);
-		} else {
-			image(&tex_card_file, 52, y + 4, 12, 17, 0, 0, rgba(255, 255, 255, 255));
+		Row *w = &sc.rows[i];
+		float y = 100 + i * 32, cy = y + 14;
+		bool on = i == sc.list_sel && sc.overlay == UI_OVERLAY_NONE;
+		rect_v(34, y, 566, 28, rgba(76, 94, 114, on ? 150 : 80), rgba(40, 54, 70, on ? 160 : 90));
+		rect(35, y + 1, 564, 1, rgba(255, 255, 255, 30));
+		float x = 44;
+		if (box) {
+			if (!w->folder) checkbox(x, cy, w->checked);
+			x += 26;
 		}
-		text(74, y + 12.5f, sc.rows[i], 12, sc.row_kind[i] == UI_ITEM_FOLDER ? GOLD : TEXT, 0, 250);
+		if (w->folder) folder_glyph(x + 1, cy - 8);
+		else if (w->has_icon) {
+			outline(x - 1, y + 1, 26, 26, 2, 1, rgba(255, 255, 255, 60));
+			image(&tex_icon[i], x, y + 2, 24, 24, 0, 0, rgba(255, 255, 255, 255));
+		} else image(&tex_card_file, x + 4, y + 4, 16, 20, 0, 0, rgba(255, 255, 255, 255));
+		x += 34;
+		text(x, cy, w->title, 13, w->folder ? GOLD : TEXT, 0, w->detail[0] ? 168 : 360);
+		if (w->detail[0]) text(x + 178, cy, w->detail, 11, SOFT, 0, 470 - (x + 178) - 8);
+		text(492, cy, w->blocks, 11, SOFT, 2, 80);
+		status_chip(590, cy, w->status);
+		if (on) gold_ring(34, y, 566, 28);
 	}
 	/* scroll bar */
 	if (sc.scroll_total > sc.scroll_count && sc.scroll_total > 0) {
-		float top = 98, h = 288;
-		rect(334, top, 2, h, rgba(4, 8, 10, 200));
+		float top = 100, h = UI_LIST_ROWS * 32 - 4;
+		rect(608, top, 2, h, rgba(4, 8, 10, 200));
 		float th = fmaxf(16, h * sc.scroll_count / sc.scroll_total);
 		float ty = top + (h - th) * (sc.scroll_total > sc.scroll_count ? (float)sc.scroll_first / (sc.scroll_total - sc.scroll_count) : 0);
-		rect(334, ty, 2, th, GOLD);
-	}
-	/* the chosen save's details */
-	panel(372, 72, 240, 320);
-	text(384, 88, sc.info_title, 13, TITLE, 0, 216);
-	rule(384, 99, 216);
-	float iy = 108;
-	if (sc.info_folder) {
-		tri(484, iy + 4, 498, iy + 4, 502, iy + 9, GOLD);
-		rect(484, iy + 4, 14, 5, GOLD);
-		rect(484, iy + 9, 36, 22, GOLD);
-	} else if (sc.has_banner || sc.has_icon) {
-		/* bannerload.c blends see-through pixels against this blue-to-purple
-		 * box (37 tall, the pictures 3 down), so it goes behind them */
-		float bx = sc.has_banner ? 380 : 434, bw = sc.has_banner ? 152 : 40;
-		float ix = sc.has_banner ? 494 : 438;
-		outline(bx - 1, iy - 4, bw + 2, 39, 0, 1, rgba(200, 208, 220, 160));
-		rect_v(bx, iy - 3, bw, 37, rgba(30, 30, 170, 255), rgba(100, 30, 130, 255));
-		if (sc.has_banner) image(&tex_banner, 384, iy, 96, 32, 0, 0, rgba(255, 255, 255, 255));
-		if (sc.has_icon) image(&tex_icon, ix, iy, 32, 32, 0, 0, rgba(255, 255, 255, 255));
-	}
-	for (int i = 0; i < UI_INFO_ROWS; i++) {
-		if (!sc.info[i].label[0] && !sc.info[i].value[0]) continue;
-		float y = 160 + i * 22;
-		if (i % 2 == 0) rect(380, y - 10, 224, 20, rgba(255, 255, 255, 12));
-		text(388, y, sc.info[i].label, 10, SOFT, 0, 78);
-		text(470, y, sc.info[i].value, 11, TEXT, 0, 132);
+		rect(608, ty, 2, th, GOLD);
 	}
 }
 
@@ -722,13 +757,14 @@ static void splash_screen(void) {
 	float w = LOGO_SPLASH_W, h = LOGO_SPLASH_H;
 	image(&tex_logo_splash, 320 - w / 2, 190 - h / 2 + (1 - k) * 8, w, h, 0, 0, rgba(255, 255, 255, (u8)(255 * k)));
 	text(320, 404, sc.splash, 11, alpha(SOFT, k), 1, 560);
+	text(320, 440, sc.title_info, 10, alpha(DIM, k), 1, 300);
 }
 
 static void overlay_panel(void) {
 	if (sc.overlay == UI_OVERLAY_NONE) return;
 	rect(vl, vt, vr - vl, vb - vt, rgba(0, 0, 0, 120));
 	float w = 360, rows = sc.orow_count, h = 64 + rows * 34;
-	float x = 320 - w / 2, y = 228 - h / 2;
+	float x = 320 - w / 2, y = 222 - h / 2;
 	panel(x, y, w, h);
 	text(x + 14, y + 18, sc.overlay_title, 13, TITLE, 0, w - 28);
 	rule(x + 14, y + 30, w - 28);
@@ -785,7 +821,7 @@ static void draw_frame(void) {
 	if (sc.screen == UI_SPLASH) {
 		splash_screen();
 	} else {
-		title_bar();
+		header();
 		if (sc.screen == UI_LIST) list_screen(); else main_screen();
 		status_bar();
 		overlay_panel();
@@ -846,11 +882,11 @@ void ui_init(void) {
 	tex_init(&tex_card_mc, card_mc_tex, CARD_MC_W, CARD_MC_H, GX_TF_RGBA8);
 	tex_init(&tex_card_sd, card_sd_tex, CARD_SD_W, CARD_SD_H, GX_TF_RGBA8);
 	tex_init(&tex_card_file, card_file_tex, CARD_FILE_W, CARD_FILE_H, GX_TF_RGBA8);
-	tex_init(&tex_banner, banner_tex, 96, 32, GX_TF_RGBA8);
-	tex_init(&tex_icon, icon_tex, 32, 32, GX_TF_RGBA8);
+	for (int i = 0; i < UI_LIST_ROWS; i++) tex_init(&tex_icon[i], icon_tex[i], 32, 32, GX_TF_RGBA8);
 
 	sc.screen = UI_SPLASH;
 	sc.main_sel = 0;
+	sc.progress = -1;
 	shown_at = now_ms();
 	running = true;
 	LWP_CreateThread(&thread, video_main, NULL, NULL, 64 * 1024, 100);

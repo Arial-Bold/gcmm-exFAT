@@ -1,5 +1,5 @@
 /****************************************************************************
-* GCMM - GameCube Memory Manager
+* GCMM exFAT - GameCube Memory Manager
 * based on libOGC Memory Card Backup by askot
 * delete support + saves information made by dsbomb
 * Gui original design by dsbomb
@@ -27,6 +27,7 @@
 #include "freetype.h"
 #include "bitmap.h"
 #include "ui.h"
+#include "saves.h"
 #include "aram/sidestep.h"
 
 #define PSOSDLOADID 0x7c6000a6
@@ -53,9 +54,11 @@ extern int displaypath;
 
 s32 MEM_CARD = CARD_SLOTB;
 extern syssramex *sramex;
+extern syssramex* __SYS_LockSramEx();
+extern u32 __SYS_UnlockSramEx(u32 write);
 extern u8 imageserial[12];
 
-#define NOFAT_MSG "No SD card found. Press R on the main screen to choose a device."
+#define NOFAT_MSG "There's no SD card. Choose one in Card tools."
 
 static void updatePAD(u32 retrace)
 {
@@ -247,90 +250,80 @@ static char slot_letter(void) { return MEM_CARD ? 'B' : 'A'; }
 
 /****************************************************************************
 * Back up saves from the memory card to the SD card
+*
+* The saves on the card, each marked New, Changed or Backed up against the
+* copies in MCBACKUP; the new and changed ones start out ticked. X backs up
+* the ticked ones.
 ****************************************************************************/
+static bool card_present(void);
+
+static void slot_line(char *out, size_t n, const char *fmt)
+{
+	snprintf(out, n, fmt, slot_letter());
+}
+
 void SD_BackupMode ()
 {
-	int memitems;
-	int selected = 0;
-	int bytestodo;
-	char buffer[256], text[64];
+	char buffer[128], where[64];
+	int sel = 0;
 
-	displaypath = 0;
-	ListBegin("Back up");
-	writeStatusBar("Reading the memory card\x85", "");
-	/*** Get the directory listing from the memory card ***/
-	memitems = CardGetDirectory (MEM_CARD);
-
-	/*** If it's a blank card, get out of here ***/
-	if (!memitems)
+	if (!card_present()) return;
+	ui_screen(UI_LIST);
+	ui_list_clear();
+	ui_list_header("Back up  \x95  choose the saves", "");
+	int n = saves_load_card(MEM_CARD);
+	if (!n)
 	{
 		WaitPrompt ("There are no saves on this memory card.");
 		return;
 	}
+	for (int i = 0; i < n; i++)
+		save_rows[i].checked = save_rows[i].status == UI_ST_NEW || save_rows[i].status == UI_ST_CHANGED;
 
-	writeStatusBar("Choose a save to back up.", "A: Back up  \x95  R: Back up all  \x95  B: Back");
-	selected = ShowSelector (1);
-	if (cancel)
+	char right[32];
+	snprintf(right, sizeof(right), "%d save%s", n, n == 1 ? "" : "s");
+	snprintf(where, sizeof(where), "They go to %s on the SD card.", MCSAVES);
+	PickSpec ps = { "Back up  \x95  choose the saves", right, "Back up",
+	                "Tick the saves to back up with A, or all of them with Y.", where };
+	if (PickList(&ps, &sel) != PICK_GO) return;
+
+	/* the ticked saves, one after another */
+	int todo = 0, done = 0, k = 0;
+	for (int i = 0; i < n; i++) if (save_rows[i].checked) todo++;
+	for (int i = 0; i < n; i++)
 	{
-		return;
-	}
-	else if(doall)
-	{
-		doall = WaitPromptChoice("Back up every save on this memory card?", "No", "Yes");
-		if (doall)
+		SaveRow *r = &save_rows[i];
+		if (!r->checked) continue;
+		k++;
+		snprintf(buffer, sizeof(buffer), "Backing up %s\x85", r->title);
+		char l2[32];
+		snprintf(l2, sizeof(l2), "%d of %d", k, todo);
+		writeStatusBar(buffer, l2);
+		ui_progress((float)(k - 1) / todo);
+		if (CardReadFile(MEM_CARD, r->index) && SDSaveMCImage())
 		{
-			for ( selected = 0; selected < memitems; selected++ ) {
-				sprintf(buffer, "[%d/%d] Reading from Memory Card %c\x85", selected+1, memitems, slot_letter());
-				ShowAction(buffer);
-				bytestodo = CardReadFile(MEM_CARD, selected);
-				if (bytestodo)
-				{
-					sprintf(buffer, "[%d/%d] Saving to the SD card\x85", selected+1, memitems);
-					ShowAction(buffer);
-					if (!SDSaveMCImage())
-					{
-						strncpy(text, (char*)filelist[selected], 32);
-						text[32]='\0';
-						sprintf(buffer, "Couldn't back up %s. Carry on?", text);
-						doall = WaitPromptChoice(buffer, "Yes", "No");
-						if (doall)
-						{
-							WaitPrompt ("Stopped backing up.");
-							return;
-						}
-					}
-				}
-				else
-				{
-					WaitPrompt ("Couldn't read the save from the memory card.");
-					return;
-				}
-			}
-			WaitPrompt("Every save is backed up.");
+			done++;
+			r->status = UI_ST_BACKED_UP;
+			r->checked = false;
+			continue;
 		}
-		return;
+		ui_progress(-1);
+		snprintf(buffer, sizeof(buffer), "Couldn't back up %s. Carry on with the rest?", r->title);
+		if (WaitPromptChoice(buffer, "Stop", "Carry on") != 1) break;
 	}
-
-	/*** Back up one save ***/
-	sprintf(buffer, "Reading from Memory Card %c\x85", slot_letter());
-	ShowAction (buffer);
-	bytestodo = CardReadFile (MEM_CARD, selected);
-	if (bytestodo)
-	{
-		ShowAction ("Saving to the SD card\x85");
-		if (SDSaveMCImage())
-			WaitPrompt ("Backed up.");
-		else
-			WaitPrompt ("Couldn't back up the save.");
-	}
-	else
-	{
-		WaitPrompt ("Couldn't read the save from the memory card.");
-	}
+	ui_progress(-1);
+	UpdateSDInfo();
+	if (done == todo) snprintf(buffer, sizeof(buffer), "Backed up %d save%s.", done, done == 1 ? "" : "s");
+	else snprintf(buffer, sizeof(buffer), "Backed up %d of the %d saves.", done, todo);
+	WaitPrompt(buffer);
 }
 
 /****************************************************************************
 * Restore saves from the SD card to the memory card
+*
+* The folders and saves in MCBACKUP, each marked whether it's on the memory
+* card already. A opens a folder (B goes back up); X puts the ticked saves
+* on the card.
 ****************************************************************************/
 static void go_up_folder(void)
 {
@@ -338,108 +331,142 @@ static void go_up_folder(void)
 	if (pos) *pos = 0;
 }
 
+static void folder_title(char *out, size_t n, const char *what)
+{
+	snprintf(out, n, "%s  \x95  %s", what, (char *)currFolder);
+}
+
 void SD_RestoreMode ()
 {
-	int files;
-	int selected;
-	char buffer[256], text[64];
+	char buffer[160], title[300], where[64];
+	int sel = 0;
 
-	displaypath = 1;
-	ListBegin("Restore");
-	writeStatusBar("Reading the SD card\x85", "");
 	sprintf((char*)currFolder, MCSAVES);
-	files = SDGetFileList (1);
-
-	if (!files)
-	{
-		WaitPrompt ("There are no saves in MCBACKUP on the SD card.");
-		return;
-	}
-
+	slot_line(where, sizeof(where), "They go onto Memory Card %c.");
 	for (;;)
 	{
-		writeStatusBar("Choose a save to put on the memory card.", "A: Restore  \x95  R: Restore all  \x95  B: Back");
-		selected = ShowSelector (1);
-
-		if (cancel)
+		ui_screen(UI_LIST);
+		ui_list_clear();
+		int files = saves_load_sd(1, MEM_CARD);
+		if (files <= 0)
 		{
 			if (strcmp((char*)currFolder, MCSAVES) == 0)
+			{
+				WaitPrompt ("There are no saves in MCBACKUP on the SD card.");
 				return;
+			}
+			WaitPrompt("This folder is empty.");
 			go_up_folder();
-			files = SDGetFileList (1);
-			cancel = 0;
-			offsetchanged = true;
+			sel = 0;
 			continue;
 		}
-		else if (doall)
+		folder_title(title, sizeof(title), "Restore");
+		char right[32];
+		snprintf(right, sizeof(right), "%d item%s", files, files == 1 ? "" : "s");
+		PickSpec ps = { title, right, "Restore", "Tick the saves to put back with A, or all of them with Y.", where };
+		int r = PickList(&ps, &sel);
+		if (r == PICK_BACK)
 		{
-			doall = WaitPromptChoice("Restore every save in this folder to the memory card?", "Yes", "No");
-			if (!doall)
-			{
-				for ( selected = folderCount; selected < files; selected++ ) {
-					sprintf(buffer, "[%d/%d] Reading from the SD card\x85", selected+1, files);
-					ShowAction(buffer);
-					if (SDLoadMCImage ((char*)filelist[selected]))
-					{
-						sprintf(buffer, "[%d/%d] Saving to Memory Card %c\x85", selected+1, files, slot_letter());
-						ShowAction(buffer);
-						if (!CardWriteFile (MEM_CARD))
-						{
-							strncpy(text, (char*)filelist[selected], 32);
-							text[32]='\0';
-							sprintf(buffer, "Couldn't restore %s. Carry on?", text);
-							doall = WaitPromptChoice(buffer, "Yes", "No");
-							if (doall)
-							{
-								WaitPrompt ("Stopped restoring.");
-								return;
-							}
-						}
-					}
-					else
-					{
-						WaitPrompt ("Couldn't read the save from the SD card.");
-						return;
-					}
-				}
-				WaitPrompt("Every save is restored.");
-			}
-			return;
+			if (strcmp((char*)currFolder, MCSAVES) == 0) return;
+			go_up_folder();
+			sel = 0;
+			continue;
 		}
-
-		//Is it a folder?
-		char folder[1024];
-		sprintf (folder, "%s:/%s/%s",fatpath, currFolder, (char*)filelist[selected]);
-		if(isdir_sd(folder) == 1)
+		if (r == PICK_OPEN)
 		{
-			sprintf(folder, "%s/%s", (char*)currFolder, (char*)filelist[selected]);
+			/* into the folder */
+			char folder[1300];
+			snprintf(folder, sizeof(folder), "%s/%s", (char*)currFolder, (char*)filelist[save_rows[sel].index]);
 			snprintf((char*)currFolder, sizeof(currFolder), "%s", folder);
-			files = SDGetFileList (1);
-			if (!files)
-			{
-				WaitPrompt("This folder is empty.");
-				go_up_folder();
-				files = SDGetFileList (1);
-			}
-			offsetchanged = true;
+			sel = 0;
 			continue;
 		}
 
-		ShowAction ("Reading from the SD card\x85");
-		if (SDLoadMCImage ((char*)filelist[selected]))
+		/* X: put the ticked ones on the card */
+		if (!card_present()) continue;
+		int todo = 0, there = 0;
+		for (int i = 0; i < save_count; i++)
+			if (save_rows[i].checked && !save_rows[i].folder) { todo++; if (save_rows[i].status == UI_ST_ON_CARD) there++; }
+		card_replace = REPLACE_ASK;
+		if (there)
 		{
-			ShowAction ("Saving to the memory card\x85");
-			if (CardWriteFile (MEM_CARD))
-				WaitPrompt ("Restored.");
-			else
-				WaitPrompt ("Couldn't restore the save.");
+			snprintf(buffer, sizeof(buffer), there == 1 ? "One of these is on the memory card already. Replace it?"
+			                                            : "%d of these are on the memory card already. Replace them?", there);
+			card_replace = WaitPromptChoice(buffer, "Leave them", "Replace") == 1 ? REPLACE_YES : REPLACE_NO;
 		}
-		else
+		int done = 0, k = 0;
+		for (int i = 0; i < save_count; i++)
 		{
-			WaitPrompt ("Couldn't read the save from the SD card.");
+			SaveRow *s = &save_rows[i];
+			if (!s->checked || s->folder) continue;
+			k++;
+			snprintf(buffer, sizeof(buffer), "Restoring %s\x85", s->title);
+			char l2[32];
+			snprintf(l2, sizeof(l2), "%d of %d", k, todo);
+			writeStatusBar(buffer, l2);
+			ui_progress((float)(k - 1) / todo);
+			if (s->status == UI_ST_ON_CARD && card_replace == REPLACE_NO) continue;
+			if (SDLoadMCImage((char*)filelist[s->index]) && CardWriteFile(MEM_CARD))
+			{
+				done++;
+				s->status = UI_ST_ON_CARD;
+				s->checked = false;
+				continue;
+			}
+			ui_progress(-1);
+			snprintf(buffer, sizeof(buffer), "Couldn't restore %s. Carry on with the rest?", s->title);
+			if (WaitPromptChoice(buffer, "Stop", "Carry on") != 1) break;
 		}
+		card_replace = REPLACE_ASK;
+		ui_progress(-1);
+		if (done == todo) snprintf(buffer, sizeof(buffer), "Restored %d save%s.", done, done == 1 ? "" : "s");
+		else snprintf(buffer, sizeof(buffer), "Restored %d of the %d saves.", done, todo);
+		WaitPrompt(buffer);
 		return;
 	}
+}
+
+/****************************************************************************
+* Delete saves from the memory card (Card tools)
+****************************************************************************/
+void MC_DeleteMode (void)
+{
+	char buffer[128], where[64];
+	int sel = 0;
+
+	if (!card_present()) return;
+	ui_screen(UI_LIST);
+	ui_list_clear();
+	ui_list_header("Delete saves  \x95  choose the saves", "");
+	int n = saves_load_card(MEM_CARD);
+	if (!n)
+	{
+		WaitPrompt ("There are no saves on this memory card.");
+		return;
+	}
+	char right[32];
+	snprintf(right, sizeof(right), "%d save%s", n, n == 1 ? "" : "s");
+	slot_line(where, sizeof(where), "They'll be deleted from Memory Card %c.");
+	PickSpec ps = { "Delete saves  \x95  choose the saves", right, "Delete", "Tick the saves to delete with A.", where };
+	if (PickList(&ps, &sel) != PICK_GO) return;
+
+	int todo = 0;
+	for (int i = 0; i < n; i++) if (save_rows[i].checked) todo++;
+	snprintf(buffer, sizeof(buffer), "Delete %d save%s from Memory Card %c? This can't be undone.", todo, todo == 1 ? "" : "s", slot_letter());
+	if (WaitPromptChoiceAZ(buffer, "Delete", "Cancel") != 0) return;
+	int done = 0, k = 0;
+	for (int i = 0; i < n; i++)
+	{
+		if (!save_rows[i].checked) continue;
+		k++;
+		snprintf(buffer, sizeof(buffer), "Deleting %s\x85", save_rows[i].title);
+		writeStatusBar(buffer, "");
+		ui_progress((float)(k - 1) / todo);
+		if (CardDeleteSave(MEM_CARD, save_rows[i].index)) done++;
+	}
+	ui_progress(-1);
+	snprintf(buffer, sizeof(buffer), "Deleted %d save%s.", done, done == 1 ? "" : "s");
+	WaitPrompt(buffer);
 }
 
 /****************************************************************************
@@ -451,7 +478,7 @@ void SD_RawBackupMode ()
 	char msg[64];
 
 	displaypath = 0;
-	writeStatusBar("Reading the memory card\x85", "");
+	writeStatusBar("Backing up the whole memory card\x85", "");
 
 	if (BackupRawImage(MEM_CARD, &writen) == 1)
 	{
@@ -467,74 +494,67 @@ void SD_RawBackupMode ()
 ****************************************************************************/
 void SD_RawRestoreMode ()
 {
-	int files;
-	int selected;
-	char msg[64];
+	char msg[128], title[300];
 	s32 writen = 0;
-	int i;
+	int sel = 0;
 
-	displaypath = 1;
-	ListBegin("Restore card");
-	writeStatusBar("Reading the SD card\x85", "");
 	sprintf((char*)currFolder, MCSAVES);
-	files = SDGetFileList (0);
-
-	if (!files)
-	{
-		WaitPrompt ("There are no card images in MCBACKUP on the SD card.");
-		return;
-	}
-
 	for (;;)
 	{
-		writeStatusBar("Choose a card image to put on the memory card.", "A: Restore  \x95  B: Back");
-		selected = ShowSelector (0);
-
-		if (cancel)
+		ui_screen(UI_LIST);
+		ui_list_clear();
+		int files = saves_load_sd(0, MEM_CARD);
+		if (files <= 0)
 		{
 			if (strcmp((char*)currFolder, MCSAVES) == 0)
-				return;
-			go_up_folder();
-			files = SDGetFileList (0);
-			cancel = 0;
-			offsetchanged = true;
-			continue;
-		}
-		if (doall || selected < 0)
-		{
-			doall = 0;   /* R does nothing here */
-			continue;
-		}
-
-		//Is it a folder?
-		char folder[1024];
-		sprintf (folder, "%s:/%s/%s",fatpath, currFolder, (char*)filelist[selected]);
-		if(isdir_sd(folder) == 1)
-		{
-			sprintf(folder, "%s/%s", (char*)currFolder, (char*)filelist[selected]);
-			snprintf((char*)currFolder, sizeof(currFolder), "%s", folder);
-			files = SDGetFileList (0);
-			if (!files)
 			{
-				WaitPrompt("This folder is empty.");
-				go_up_folder();
-				files = SDGetFileList (0);
+				WaitPrompt ("There are no card images in MCBACKUP on the SD card.");
+				return;
 			}
-			offsetchanged = true;
+			WaitPrompt("This folder is empty.");
+			go_up_folder();
+			sel = 0;
+			continue;
+		}
+		folder_title(title, sizeof(title), "Restore a whole card");
+		snprintf(msg, sizeof(msg), "Everything on Memory Card %c will be replaced.", slot_letter());
+		PickSpec ps = { title, "", NULL, "Choose the card image to put on the memory card.", msg };
+		int r = PickList(&ps, &sel);
+		if (r == PICK_BACK)
+		{
+			if (strcmp((char*)currFolder, MCSAVES) == 0) return;
+			go_up_folder();
+			sel = 0;
+			continue;
+		}
+		SaveRow *s = &save_rows[sel];
+		if (s->folder)
+		{
+			char folder[1300];
+			snprintf(folder, sizeof(folder), "%s/%s", (char*)currFolder, (char*)filelist[s->index]);
+			snprintf((char*)currFolder, sizeof(currFolder), "%s", folder);
+			sel = 0;
 			continue;
 		}
 
 #ifdef FLASHIDCHECK
-		//imageserial and sramex.flash_id[MEM_CARD] now hold the two flash IDs
-		for (i=0;i<12;i++){
+		/* a card image only goes back on the card it came from */
+		SDLoadCardImageHeader((char*)filelist[s->index]);
+		getserial(imageserial);
+		Card_SerialNo(MEM_CARD);
+		sramex = __SYS_LockSramEx();
+		__SYS_UnlockSramEx(0);
+		for (int i=0;i<12;i++){
 			if (imageserial[i] != sramex->flash_id[MEM_CARD][i]){
 				WaitPrompt ("This image was made from a different memory card.");
 				return;
 			}
 		}
 #endif
-		ShowAction ("Reading from the SD card\x85");
-		if (RestoreRawImage(MEM_CARD, (char*)filelist[selected], &writen) == 1)
+		snprintf(msg, sizeof(msg), "Put %s on Memory Card %c? Everything on the card now will be lost.", s->title, slot_letter());
+		if (WaitPromptChoiceAZ(msg, "Restore", "Cancel") != 0) continue;
+		writeStatusBar("Restoring the whole memory card\x85", "");
+		if (RestoreRawImage(MEM_CARD, (char*)filelist[s->index], &writen) == 1)
 		{
 			sprintf(msg, "Restored the whole card (%d bytes).", writen);
 			WaitPrompt(msg);
@@ -661,6 +681,7 @@ int main (int argc, char *argv[])
 	find_settings(argc, argv);
 	ui_settings_load();
 	skip_selector = 0;
+	MainSummaryRefresh();
 
 	for (;;)
 	{
@@ -685,10 +706,10 @@ int main (int argc, char *argv[])
 		switch (mode)
 		{
 		case 200 : //Delete saves
-			MC_DeleteMode(MEM_CARD);
+			MC_DeleteMode();
 			break;
 		case 300 : //Back up saves
-			if (have_sd) { SD_BackupMode(); UpdateSDInfo(); }
+			if (have_sd) SD_BackupMode();
 			else WaitPrompt(NOFAT_MSG);
 			break;
 		case 400 : //Restore saves
@@ -725,6 +746,7 @@ int main (int argc, char *argv[])
 		}
 
 		offsetchanged = true;
+		if (mode != 500) MainSummaryRefresh();   /* (the saves may have changed) */
 	}
 	return 0;
 }

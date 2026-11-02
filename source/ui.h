@@ -43,35 +43,35 @@ GXRModeObj *ui_video_mode(void);
 /* ------------------------------------------------------------------ scene */
 
 enum { UI_SPLASH, UI_MAIN, UI_LIST };
-enum { UI_ITEM_FILE, UI_ITEM_FOLDER, UI_ITEM_SAVE };
-enum { UI_OVERLAY_NONE, UI_OVERLAY_DEVICES, UI_OVERLAY_SETTINGS };
+/* what a row's chip says */
+enum { UI_ST_NONE, UI_ST_NEW, UI_ST_CHANGED, UI_ST_BACKED_UP, UI_ST_ON_CARD, UI_ST_NOT_ON_CARD };
+enum { UI_OVERLAY_NONE, UI_OVERLAY_DEVICES, UI_OVERLAY_SETTINGS, UI_OVERLAY_TOOLS };
 
-#define UI_LIST_ROWS 10
-#define UI_INFO_ROWS 8
+#define UI_LIST_ROWS 8
 #define UI_OVERLAY_ROWS 6
 
 void ui_screen(int screen);
-void ui_title_info(const char *text);                  /* right of the title bar: version and device */
+void ui_title_info(const char *text);                  /* the version (shown on the splash screen) */
 void ui_splash_text(const char *text);
 void ui_status(const char *line1, const char *line2);  /* the description bar along the bottom */
+void ui_action(const char *label, char key);           /* a button at the right of the bar (label NULL: none) */
+void ui_progress(float f);                              /* a bar in the description bar, 0..1 (< 0: none) */
 
-/* main screen */
+/* the header: the memory card and the SD card */
 void ui_main_cards(const char *mc_name, const char *mc_info, const char *sd_name, const char *sd_info);
-void ui_main_select(int row);                           /* 0: saves on the memory card, 1: saves on the SD card, -1: none */
 
-/* list screen */
-void ui_list_header(const char *path, const char *mode);
+/* main screen: the three jobs (0 Back up, 1 Restore, 2 Card tools; -1 none chosen) */
+void ui_main_select(int tile);
+
+/* list screen: the saves (or folders, or card images) to choose from */
+void ui_list_header(const char *title, const char *right);
 void ui_list_clear(void);
-void ui_list_row(int row, const char *name, int kind);
+void ui_list_checkable(bool on);                        /* rows have tick boxes */
+/* checked: 0 or 1 (ignored for folders); blocks: "" for none */
+void ui_list_row(int row, const char *title, const char *detail, const char *blocks, int status, int checked, bool folder);
+void ui_list_icon(int row, const u8 *bgr);              /* 32x32, 3 bytes a pixel (blue, green, red); NULL: none */
 void ui_list_select(int row);
 void ui_list_scroll(int first, int count, int total);    /* for the scroll bar */
-void ui_info_clear(void);
-void ui_info_title(const char *title);
-void ui_info_row(int row, const char *label, const char *value);
-void ui_info_folder(bool folder);
-void ui_info_banner_rgb(const u8 *bgr);                 /* 96x32, 3 bytes a pixel (blue, green, red) */
-void ui_info_icon_rgb(const u8 *bgr);                   /* 32x32, likewise */
-void ui_info_no_pictures(void);
 
 /* panels over the screen */
 void ui_overlay(int overlay, const char *title);

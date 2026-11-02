@@ -1,5 +1,5 @@
 /****************************************************************************
-* freetype.h - GCMM's screens and prompts (see freetype.c)
+* freetype.h - GCMM exFAT's screens and prompts (see freetype.c)
 ****************************************************************************/
 #ifndef _FTFONTS_
 #define _FTFONTS_
@@ -23,7 +23,18 @@ const char *DeviceName (int dev);
 void UpdateTitleInfo (void);
 void UpdateSDInfo (void);
 
-void ListBegin (const char *mode_name);
-int ShowSelector (int saveinfo);
+void UpdateMainCards (void);
+void MainSummaryRefresh (void);   /* the main screen's line: the saves, and how many aren't backed up */
+
+/* the save lists (save_rows in saves.c) */
+typedef struct {
+	const char *title;   /* along the top of the list */
+	const char *right;   /* at its right */
+	const char *verb;    /* "Back up", "Restore", "Delete": tick boxes and the X button; NULL: A chooses a row */
+	const char *hint;    /* the bar's first line while nothing is ticked */
+	const char *where;   /* its second line: where they go */
+} PickSpec;
+enum { PICK_BACK, PICK_GO, PICK_OPEN };
+int PickList (const PickSpec *ps, int *sel);
 
 #endif
