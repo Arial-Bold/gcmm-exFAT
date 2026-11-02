@@ -212,6 +212,24 @@ static void find_settings(int argc, char *argv[])
 	ui_settings_path(path);
 }
 
+/* Is there a memory card in this slot? (only looks: doesn't mount it) */
+static bool slot_has_card(s32 slot, bool or_busy)
+{
+	s32 r = CARD_ProbeEx(slot, NULL, NULL);
+	return r == CARD_ERROR_READY || (or_busy && r == CARD_ERROR_BUSY);
+}
+
+/* With an SD2SP2, a GC Loader or no SD card, both memory card slots are
+ * free: if the slot in use is empty and the other has a card, use that one.
+ * (An SD Gecko takes one slot, so then the card can only be in the other.) */
+void pick_card_slot(void)
+{
+	if (CUR_DEVICE == DEV_GCSDA || CUR_DEVICE == DEV_GCSDB) return;
+	s32 other = MEM_CARD == CARD_SLOTA ? CARD_SLOTB : CARD_SLOTA;
+	if (slot_has_card(MEM_CARD, true)) return;
+	if (slot_has_card(other, false)) MEM_CARD = other;
+}
+
 /* After choosing a device: mount it and pick the memory card slot */
 static void use_device(void)
 {
@@ -219,6 +237,8 @@ static void use_device(void)
 	//The memory card goes in the other slot to an SD Gecko
 	if (CUR_DEVICE == DEV_GCSDB) MEM_CARD = CARD_SLOTA;
 	else if (CUR_DEVICE == DEV_GCSDA) MEM_CARD = CARD_SLOTB;
+	else MEM_CARD = CARD_SLOTA;   /* both slots free: start with A (pick_card_slot moves to B if that's where the card is) */
+	pick_card_slot();
 	UpdateTitleInfo();
 	UpdateSDInfo();
 }
@@ -649,12 +669,17 @@ int main (int argc, char *argv[])
 		doall = 0;
 		mode = SelectMode ();
 
-		//SD2SP2 and GC Loader leave both memory card slots free: ask which
-		if (mode != 500 && mode != 1000 && (CUR_DEVICE == DEV_GCSDC || CUR_DEVICE == DEV_GCODE)) {
-			if (WaitPromptChoice ("Which memory card slot?", "Slot B", "Slot A") == 1)
-				MEM_CARD = CARD_SLOTA;
-			else
-				MEM_CARD = CARD_SLOTB;
+		//SD2SP2 and GC Loader leave both memory card slots free: use the one
+		//with a card in it, and only ask when there's a card in each
+		if (mode != 500 && mode != 1000 && CUR_DEVICE != DEV_GCSDA && CUR_DEVICE != DEV_GCSDB) {
+			if (slot_has_card(CARD_SLOTA, true) && slot_has_card(CARD_SLOTB, true)) {
+				if (WaitPromptChoice ("Which memory card slot?", "Slot B", "Slot A") == 1)
+					MEM_CARD = CARD_SLOTA;
+				else
+					MEM_CARD = CARD_SLOTB;
+			} else {
+				pick_card_slot();
+			}
 		}
 
 		switch (mode)

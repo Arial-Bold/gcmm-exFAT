@@ -32,6 +32,7 @@ extern int mode;
 extern s32 MEM_CARD;
 extern u8 CUR_DEVICE;
 extern bool have_sd;
+void pick_card_slot(void);
 
 extern u16 bannerdata[CARD_BANNER_W*CARD_BANNER_H] ATTRIBUTE_ALIGN (32);
 extern u8 bannerdataCI[CARD_BANNER_W*CARD_BANNER_H] ATTRIBUTE_ALIGN (32);
@@ -239,6 +240,7 @@ static void UpdateMainCards(void)
 {
 	char mc_name[32], mc_info[48];
 	s32 size = 0, sect = 0;
+	pick_card_slot();   /* (follows a card moved to the other slot) */
 	s32 r = CARD_ProbeEx(MEM_CARD, &size, &sect);
 	snprintf(mc_name, sizeof(mc_name), "Memory Card %c", MEM_CARD ? 'B' : 'A');
 	if ((r == CARD_ERROR_READY || r == CARD_ERROR_BUSY) && size > 0)
