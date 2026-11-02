@@ -10,6 +10,17 @@ endif
 #include $(DEVKITPPC)/gamecube_rules
 include $(DEVKITPRO)/libogc2/gamecube_rules
 
+# mbedTLS 3.6, for Update from GitHub (the secure connection). get-deps.sh
+# downloads it into third_party/mbedtls.
+MBEDTLS		:=	third_party/mbedtls
+ifneq (build_GC,$(notdir $(CURDIR)))
+ifneq ($(MAKECMDGOALS),clean)
+ifeq ($(wildcard $(MBEDTLS)/library/ssl_tls.c),)
+$(error "mbedTLS not found in $(MBEDTLS). Run sh get-deps.sh first (see README.md)")
+endif
+endif
+endif
+
 #---------------------------------------------------------------------------------
 # TARGET is the name of the output
 # BUILD is the directory where object files & intermediate files will be placed
@@ -18,7 +29,7 @@ include $(DEVKITPRO)/libogc2/gamecube_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	gcmm_GC
 BUILD		:=	build_GC
-SOURCES		:=	source source/aram
+SOURCES		:=	source source/aram source/net $(MBEDTLS)/library
 DATA		:=
 INCLUDES	:=
 
@@ -26,16 +37,18 @@ INCLUDES	:=
 # options for code generation
 #---------------------------------------------------------------------------------
 
-CFLAGS	= -g -O2 -Wall $(MACHDEP) $(INCLUDE)
+CFLAGS	= -g -O2 -Wall -ffunction-sections -fdata-sections $(MACHDEP) $(INCLUDE) \
+		-DMBEDTLS_USER_CONFIG_FILE='"gc_mbedtls_config.h"'
 CXXFLAGS	=	$(CFLAGS)
 
-LDFLAGS	=	-g $(MACHDEP) -Wl,-Map,$(notdir $@).map
+LDFLAGS	=	-g $(MACHDEP) -Wl,--gc-sections -Wl,-Map,$(notdir $@).map
 
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-# libfat (from libdvm) reads FAT, FAT32 and exFAT SD cards
-LIBS	:=	-lfat -logc -lm
+# libfat (from libdvm) reads FAT, FAT32 and exFAT SD cards; libbba is the
+# network (Broadband Adapter, ETH2GC) and must come before libogc
+LIBS	:=	-lfat -lbba -logc -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
@@ -86,6 +99,9 @@ export HFILES := $(addsuffix .h,$(subst .,_,$(BINFILES)))
 #---------------------------------------------------------------------------------
 export INCLUDE	:=	$(foreach dir,$(INCLUDES), -iquote $(CURDIR)/$(dir)) \
 					$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+					-I$(CURDIR)/source/net \
+					-I$(CURDIR)/$(MBEDTLS)/include \
+					-I$(CURDIR)/$(MBEDTLS)/library \
 					-I$(CURDIR)/$(BUILD) \
 					-I$(LIBOGC_INC)
 
