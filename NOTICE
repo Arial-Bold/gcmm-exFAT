@@ -1,0 +1,24 @@
+GCMM exFAT
+Copyright (c) 2026 Arial-Bold
+
+GCMM exFAT is a modified version of GCMM, the GameCube memory card manager
+by dsbomb, justb and suloku (https://github.com/suloku/gcmm), based on
+askot's libOGC Memory Card Backup. Like GCMM, it is free software under the
+GNU General Public License, version 3 or later (see COPYING). You can use,
+share and change it under those terms.
+
+The parts written for GCMM exFAT that also appear in Arial-Bold's other
+GameCube apps (the network and update code in source/net, the menu sounds
+in source/sfxsynth.c and source/sound.c, and the program loader in
+source/dolload.c) are additionally available under the MIT License from
+those apps. Within GCMM exFAT they are distributed under the GPL with the
+rest of the program.
+
+Other parts:
+- mbedTLS (downloaded by get-deps.sh): Apache License 2.0.
+- cacert.pem: Mozilla's trusted root certificates (Mozilla Public License 2.0).
+- M PLUS Rounded 1c font: SIL Open Font License (tools/fonts/OFL.txt).
+- libogc2 and libdvm: Extrems and the devkitPro team, under their own licences.
+
+GCMM exFAT is not affiliated with, endorsed by or sponsored by Nintendo.
+GameCube is a trademark of Nintendo.
