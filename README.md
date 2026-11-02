@@ -1,9 +1,10 @@
 # GCMM exFAT
 
-GCMM (GameCube Memory Manager) backs up, restores and deletes the saves on your GameCube memory cards, using an SD card. This is an unofficial fork of [suloku's GCMM](https://github.com/suloku/gcmm) for the GameCube, with:
+GCMM exFAT backs up, restores and deletes the saves on your GameCube memory cards, using an SD card. It's an unofficial fork of [suloku's GCMM](https://github.com/suloku/gcmm) for the GameCube, with:
 
 - **exFAT SD cards**, as well as FAT and FAT32
-- a new look, in the style of the GameCube's own menus
+- a new look in the style of the GameCube's own menus, built around the three jobs: **Back up**, **Restore** and **Card tools**
+- tick boxes, so you can back up or restore several saves at once, and labels that say which saves are new, changed or already backed up
 - **display settings**: resolution, 4:3 or 16:9, picture width and overscan
 - a new logo and splash screen
 
@@ -11,16 +12,15 @@ It runs on the GameCube only.
 
 ## What it does
 
-- Back up saves from the memory card to the SD card (as .gci files)
-- Restore saves to the memory card (.gci, .gcs and .sav)
-- Delete saves from the memory card
-- Back up a whole memory card as a .raw image, and restore .raw, .gcp and .mci images
-- Format a memory card
-- Shows each save's banner, animated icon and details
+The main screen has three big choices:
 
-Saves go in the `MCBACKUP` folder on the SD card. Folders inside it are fine.
+- **Back up**: the saves on the memory card, each marked **New** (no backup yet), **Changed** (newer than its backup) or **Backed up**. The new and changed ones start out ticked; X backs up the ticked saves.
+- **Restore**: the saves (.gci, .gcs and .sav) in `MCBACKUP` on the SD card, and the folders in it, each marked whether it's on the memory card already. Tick the ones you want and press X. If some are on the card already, you're asked once whether to replace them.
+- **Card tools**: back up a whole memory card as a .raw image, restore a whole card (.raw, .gcp and .mci), delete saves, format the card, choose the SD card, and the settings.
 
-SD cards can be in an SD2SP2, an SD Gecko (Slot A or B) or a GC Loader.
+Every save shows its own icon and comment. The bar along the bottom says how many saves you've ticked and where they'll go.
+
+Backups go in the `MCBACKUP` folder on the SD card; folders inside it are fine. SD cards can be in an SD2SP2, an SD Gecko (Slot A or B) or a GC Loader. With an SD2SP2 or GC Loader, GCMM exFAT uses whichever slot has a memory card in it.
 
 ## Installing
 
@@ -28,20 +28,16 @@ Download `gcmm.zip` from the Releases page and copy the `gcmm` folder in it to y
 
 ## Controls
 
-| Button | Main screen |
+| Button | |
 | --- | --- |
-| + Control Pad, A | Choose *Saves on the memory card* (back up) or *Saves on the SD card* (restore) |
-| Y | Back up saves |
-| X | Restore saves |
-| Z | Delete saves |
-| L + Y | Back up the whole card |
-| L + X | Restore the whole card |
-| L + Z | Format the card |
-| R | Choose the SD card device |
-| START | Settings |
+| Control Stick, + Control Pad | Move |
+| A | Choose; in a list, tick a save or open a folder |
+| Y | Tick every save (or none) |
+| X | Back up, restore or delete the ticked saves |
+| B | Back |
+| Left / Right | A page at a time in a list |
+| START | Settings (on the main screen) |
 | Hold START | Exit to Launcher |
-
-In a list, A chooses, B goes back, R does every save at once, and Left/Right move a page. The bar along the bottom always says what the buttons do.
 
 ## Settings
 
@@ -52,19 +48,19 @@ Press START on the main screen.
 - **Picture width**: Full uses the whole width of the TV picture; Standard leaves a border.
 - **Overscan**: pulls everything in from the edges if your TV cuts them off.
 
-They're kept in `settings.ini` beside GCMM's `default.dol` (or in `MCBACKUP/gcmm.ini` if GCMM can't find its own folder on the SD card).
+They're kept in `settings.ini` beside GCMM exFAT's `default.dol` (or in `MCBACKUP/gcmm.ini` if it can't find its own folder on the SD card). They're also in Card tools.
 
-## Leaving GCMM
+## Leaving GCMM exFAT
 
-Holding START goes back to the loader that started GCMM, if there is one; otherwise it starts `autoexec.dol` from the SD card (your Launcher, if that's where it is), and failing that it restarts the GameCube.
+Holding START on the main screen goes back to the loader that started it, if there is one; otherwise it starts `autoexec.dol` from the SD card (your Launcher, if that's where it is), and failing that it restarts the GameCube.
 
 ## Choosing the device when starting
 
-GCMM can be started with one of these arguments (for example from a .cli file next to the .dol): `ask` (always show the device choice), `sdgecko`, `sdgeckoA`, `sdgeckoB`, `sd2sp2` or `gcloader`.
+GCMM exFAT can be started with one of these arguments (for example from a .cli file next to the .dol): `ask` (always show the device choice), `sdgecko`, `sdgeckoA`, `sdgeckoB`, `sd2sp2` or `gcloader`.
 
 ## Building
 
-GCMM builds with devkitPPC and [libogc2](https://github.com/extremscorner/libogc2), which includes libdvm for FAT and exFAT. The easiest way is the libogc2 container:
+GCMM exFAT builds with devkitPPC and [libogc2](https://github.com/extremscorner/libogc2), which includes libdvm for FAT and exFAT. The easiest way is the libogc2 container:
 
 ```
 docker run --rm -v "$PWD:/src" -w /src ghcr.io/extremscorner/libogc2:latest make
