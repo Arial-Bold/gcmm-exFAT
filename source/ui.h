@@ -42,20 +42,30 @@ GXRModeObj *ui_video_mode(void);
 
 /* ------------------------------------------------------------------ scene */
 
-enum { UI_SPLASH, UI_MAIN, UI_LIST, UI_TOOLS };
+enum { UI_SPLASH, UI_MAIN, UI_LIST, UI_TOOLS, UI_UPDATE, UI_SETTINGS };
 /* what a row's chip says */
 enum { UI_ST_NONE, UI_ST_NEW, UI_ST_CHANGED, UI_ST_BACKED_UP, UI_ST_ON_CARD, UI_ST_NOT_ON_CARD };
-enum { UI_OVERLAY_NONE, UI_OVERLAY_DEVICES, UI_OVERLAY_SETTINGS };
+enum { UI_OVERLAY_NONE, UI_OVERLAY_DEVICES };
 
 #define UI_LIST_ROWS 8
-#define UI_OVERLAY_ROWS 6
+#define UI_OVERLAY_ROWS 8
 
 void ui_screen(int screen);
+int  ui_get_screen(void);
+void ui_splash_ready(void);   /* the splash screen's logo waits for this (once the settings are read) */
 void ui_title_info(const char *text);                  /* the version (shown on the splash screen) */
 void ui_splash_text(const char *text);
 void ui_status(const char *line1, const char *line2);  /* the description bar along the bottom */
-void ui_action(const char *label, char key);           /* a button at the right of the bar (label NULL: none) */
 void ui_progress(float f);                              /* a bar in the description bar, 0..1 (< 0: none) */
+/* the controls along the very bottom, CubeVerse style: "key:label", where the
+ * key is S (the Control Stick), A, B, X, Y, Z, ST (START) or none ("label") */
+#define UI_HINTS_MAX 5
+void ui_hints(const char *const *hints, int n);
+void ui_hints_push(void);   /* keeps the controls shown now (for a question), */
+void ui_hints_pop(void);    /* and brings them back */
+
+/* the Settings page: rows as for the panels (ui_overlay_row, _select, _rows);
+ * a value starting with \x02 is information, not a choice (no arrows) */
 
 /* the header: the memory card and the SD card */
 void ui_main_cards(const char *mc_name, const char *mc_info, const char *sd_name, const char *sd_info);
@@ -69,6 +79,10 @@ void ui_main_select(int tile);
  * 5 settings) */
 #define UI_TOOLS_COUNT 6
 void ui_tools_select(int tile);
+
+/* the Update page: this version, the newest on GitHub ("" while checking)
+ * and what's new in it */
+void ui_update_page(const char *this_version, const char *newest, const char *notes);
 
 /* list screen: the saves (or folders, or card images) to choose from */
 void ui_list_header(const char *title, const char *right);

@@ -29,6 +29,8 @@
 #include "ui.h"
 #include "saves.h"
 #include "aram/sidestep.h"
+#include "net/storage.h"
+#include "net/update.h"
 
 #define PSOSDLOADID 0x7c6000a6
 //Comment FLASHIDCHECK to allow writing any image to any mc. This will corrupt official cards.
@@ -580,6 +582,36 @@ static bool card_present(void)
 }
 
 /****************************************************************************
+* Starts a .dol from the SD card (its path goes to it as argv[0], so it knows
+* where it lives). Only returns if the file couldn't be read.
+****************************************************************************/
+bool gcmm_launch_dol(const char *path)
+{
+	FILE *fp = fopen(path, "rb");
+	if (!fp) return false;
+	fseek(fp, 0, SEEK_END);
+	int size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	u8 *dol = NULL;
+	if (size > 0 && size < (int)(AR_GetSize() - (64*1024))) dol = (u8*) memalign(32, size);
+	if (!dol || fread(dol, 1, size, fp) != (size_t)size) {
+		fclose(fp);
+		free(dol);
+		return false;
+	}
+	fclose(fp);
+	static char arg0[300];
+	snprintf(arg0, sizeof(arg0), "%s", path);
+	char *argv[1] = { arg0 };
+	deinitFAT();
+	ui_shutdown();
+	DOLtoARAM(dol, 1, argv);
+	/* only gets here if the .dol couldn't start */
+	SYS_ResetSystem(SYS_HOTRESET, 0, 0);
+	return false;
+}
+
+/****************************************************************************
 * Leave GCMM: back to the loader that started it, or the Launcher
 * (autoexec.dol on the SD card), or restart the GameCube
 ****************************************************************************/
@@ -597,25 +629,7 @@ static void exit_to_launcher(void)
 	if (have_sd){
 		char exitdol[64];
 		sprintf(exitdol, "%s:/autoexec.dol",fatpath);
-		FILE *fp = fopen(exitdol, "rb");
-		if (fp) {
-			fseek(fp, 0, SEEK_END);
-			int size = ftell(fp);
-			fseek(fp, 0, SEEK_SET);
-			if ((size > 0) && (size < (AR_GetSize() - (64*1024)))) {
-				u8 *dol = (u8*) memalign(32, size);
-				if (dol) {
-					fread(dol, 1, size, fp);
-					fclose(fp);
-					deinitFAT();
-					ui_shutdown();
-					DOLtoARAM(dol, 0, NULL);
-					/* only gets here if the .dol couldn't start */
-					SYS_ResetSystem(SYS_HOTRESET, 0, 0);
-				}
-			}
-			fclose(fp);
-		}
+		gcmm_launch_dol(exitdol);
 	}
 	deinitFAT();
 	ui_shutdown();
@@ -630,18 +644,11 @@ int main (int argc, char *argv[])
 	have_sd = false;
 	CUR_DEVICE = 0;
 
-	ui_init();      /* video, and the splash screen */
+	ui_init();      /* video; the splash screen waits for the settings (below) */
 	VIDEO_SetPostRetraceCallback (updatePAD);
-	u64 splash_start = ticks_to_millisecs(gettime());
-	ui_splash_text("Looking for SD cards\x85");
+	storage_set_program(argc > 0 && argv ? argv[0] : NULL);
 
 	detect_devices();
-
-	/* let the logo settle before moving on */
-	while (ticks_to_millisecs(gettime()) - splash_start < 1500) VIDEO_WaitVSync();
-	ui_screen(UI_MAIN);
-	ui_main_select(-1);
-	UpdateTitleInfo();
 
 	//Command line (from a .cli file): ask, sdgecko, sdgeckoA, sdgeckoB, gcloader, sd2sp2
 	if (argc > 1 && argv[1])
@@ -674,13 +681,32 @@ int main (int argc, char *argv[])
 			if (DEVICES[DEV_GCSDC] == DEV_AVAIL) CUR_DEVICE = DEV_GCSDC;
 		}
 	}
-	//No device yet: the device choice (skipped on first boot if there's only one)
-	if (CUR_DEVICE == 0) CUR_DEVICE = device_select();
+	/* With one SD card adapter, or one given on the command line, the SD card
+	 * opens straight away, so the settings (16:9 and so on) are in place
+	 * before the splash screen shows */
+	if (CUR_DEVICE == 0 && DEVICES[DEV_NUM] == 1 && skip_selector) CUR_DEVICE = device_select();
+	if (CUR_DEVICE) {
+		use_device();
+		find_settings(argc, argv);
+		ui_settings_load();
+	}
+	ui_splash_ready();
+	ui_splash_text("Looking for saves\x85");
+	u64 splash_start = ticks_to_millisecs(gettime());
+	while (ticks_to_millisecs(gettime()) - splash_start < 1500) VIDEO_WaitVSync();   /* let the logo settle */
+	ui_screen(UI_MAIN);
+	ui_main_select(-1);
+	UpdateTitleInfo();
 
-	use_device();
-	find_settings(argc, argv);
-	ui_settings_load();
+	//Several adapters: choose one (and its settings then)
+	if (!have_sd && CUR_DEVICE == 0) {
+		CUR_DEVICE = device_select();
+		use_device();
+		find_settings(argc, argv);
+		ui_settings_load();
+	}
 	skip_selector = 0;
+	if (have_sd) update_remove_old();   /* the version an update replaced */
 	MainSummaryRefresh();
 
 	for (;;)

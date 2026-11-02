@@ -90,12 +90,15 @@ static struct {
 	char title_info[64];
 	char splash[TXT];
 	char status1[TXT], status2[TXT];
-	char action[48], action_key;
+	char hints[UI_HINTS_MAX][32], saved_hints[UI_HINTS_MAX][32];
+	int hint_count, saved_count;
+	bool splash_ready;
 	float progress;
 	/* header */
 	char mc_name[32], mc_info[48], mc2_name[32], mc2_info[48], sd_name[32], sd_info[48];
 	/* main */
 	int main_sel, tools_sel;
+	char upd_now[24], upd_new[24], upd_notes[1200];
 	/* list */
 	char list_title[TXT], list_right[48];
 	bool checkable;
@@ -121,8 +124,18 @@ void ui_screen(int s) { L(); if (sc.screen != s) shown_at = now_ms(); sc.screen 
 void ui_title_info(const char *t) { L(); cpy(sc.title_info, t, sizeof(sc.title_info)); U(); }
 void ui_splash_text(const char *t) { L(); cpy(sc.splash, t, sizeof(sc.splash)); U(); }
 void ui_status(const char *a, const char *b) { L(); cpy(sc.status1, a, TXT); cpy(sc.status2, b, TXT); U(); }
-void ui_action(const char *label, char key) { L(); cpy(sc.action, label, sizeof(sc.action)); sc.action_key = key; U(); }
 void ui_progress(float f) { L(); sc.progress = f; U(); }
+void ui_hints(const char *const *h, int n) {
+	L();
+	if (n > UI_HINTS_MAX) n = UI_HINTS_MAX;
+	for (int i = 0; i < n; i++) cpy(sc.hints[i], h[i], sizeof(sc.hints[i]));
+	sc.hint_count = n;
+	U();
+}
+void ui_hints_push(void) { L(); memcpy(sc.saved_hints, sc.hints, sizeof(sc.hints)); sc.saved_count = sc.hint_count; U(); }
+void ui_hints_pop(void) { L(); memcpy(sc.hints, sc.saved_hints, sizeof(sc.hints)); sc.hint_count = sc.saved_count; U(); }
+int ui_get_screen(void) { return sc.screen; }
+void ui_splash_ready(void) { L(); sc.splash_ready = true; shown_at = now_ms(); U(); }
 void ui_main_cards(const char *mn, const char *mi, const char *sn, const char *si) {
 	L();
 	cpy(sc.mc_name, mn, sizeof(sc.mc_name)); cpy(sc.mc_info, mi, sizeof(sc.mc_info));
@@ -131,6 +144,9 @@ void ui_main_cards(const char *mn, const char *mi, const char *sn, const char *s
 }
 void ui_main_card2(const char *mn, const char *mi) {
 	L(); cpy(sc.mc2_name, mn, sizeof(sc.mc2_name)); cpy(sc.mc2_info, mi, sizeof(sc.mc2_info)); U();
+}
+void ui_update_page(const char *a, const char *b, const char *n) {
+	L(); cpy(sc.upd_now, a, sizeof(sc.upd_now)); cpy(sc.upd_new, b, sizeof(sc.upd_new)); cpy(sc.upd_notes, n, sizeof(sc.upd_notes)); U();
 }
 void ui_tools_select(int r) { L(); sc.tools_sel = r; U(); }
 void ui_main_select(int r) { L(); sc.main_sel = r; U(); }
@@ -501,10 +517,9 @@ static void desc_bar(float x, float y, float w, float h) {
 
 static void rule(float x, float y, float w) { rect(x, y, w, 1, rgba(200, 210, 230, 70)); }
 
-/* ------------------------------------------------- the TV-screen backdrop
- * CubeVerse's "soft phosphor" screen: a deep blue-black, a cool glow, soft
- * scanlines bowed by the curve of the glass and a dark tube-shaped edge.
- * The meshes are worked out once (and again when the screen shape changes). */
+/* ------------------------------------------------------- the background
+ * As Flashcube's: near black, a 24px grid of 2px lines lined up on the
+ * middle of the screen, and a soft dark vignette towards the edges. */
 
 static void mesh(int cols, int rows, const float *xy, const Color *c) {
 	mode_color();
@@ -519,76 +534,28 @@ static void mesh(int cols, int rows, const float *xy, const Color *c) {
 	}
 }
 
-static void tube_point(float fx, float fy, float fw, float fh, float u, float v, float k, float *x, float *y) {
-	float bu = u * (1 + k * v * v), bv = v * (1 + k * 1.4f * u * u);
-	*x = fx + fw * (bu + 1) / 2;
-	*y = fy + fh * (bv + 1) / 2;
-}
-
-enum { GC = 12, GR = 8, SC = 16, SROWS = 63, VC = 24, VR = 18 };
-static float glow_xy[2][(GC + 1) * (GR + 1) * 2];
-static Color glow_c[2][(GC + 1) * (GR + 1)];
-static float *scan_xy;     /* (SC+1) x up to 4*SROWS rows */
-static Color *scan_c;
-static int scan_rows;
-static float edge_xy[(VC + 1) * (VR + 1) * 2];
-static Color edge_c[(VC + 1) * (VR + 1)];
-static float made_for[4] = { -1, -1, -1, -1 };
-
-static void backdrop_make(float fx, float fy, float fw, float fh) {
-	for (int pass = 0; pass < 2; pass++)
-		for (int j = 0; j <= GR; j++)
-			for (int i = 0; i <= GC; i++) {
-				int k = j * (GC + 1) + i;
-				float x = fx + fw * i / GC, y = fy + fh * j / GR;
-				glow_xy[pass][k * 2] = x; glow_xy[pass][k * 2 + 1] = y;
-				float dx = (x - (fx + fw / 2)) / (fw * (pass ? 0.45f : 0.6f));
-				float dy = pass ? (y - (fy + fh * 0.5f)) / (fh * 0.5f) : (y - (fy + fh * 0.3f)) / (fh * 0.7f);
-				float v = clamp01(1 - sqrtf(dx * dx + dy * dy) / (pass ? 0.66f : 0.62f));
-				glow_c[pass][k] = pass ? rgba(60, 110, 175, (u8)(clamp01(v * 0.13f * 1.7f) * 255)) : rgba(120, 170, 225, (u8)(clamp01(v * 0.17f * 1.7f) * 255));
-			}
-	/* scanlines: per line clear, full, full (then clear at the next line), 8 units apart */
-	static const float pos[3] = { 0, 0.3f, 0.72f };
-	const float period = 8;
-	int nrows = (int)(fh / period) * 3 + 1;
-	free(scan_xy); free(scan_c);
-	scan_xy = malloc(sizeof(float) * (SC + 1) * nrows * 2);
-	scan_c = malloc(sizeof(Color) * (SC + 1) * nrows);
-	scan_rows = (scan_xy && scan_c) ? nrows : 0;
-	for (int r = 0; r < scan_rows; r++) {
-		int line = r / 3, ph = r % 3;
-		float v = (line + pos[ph]) * period / fh * 2 - 1;
-		for (int i = 0; i <= SC; i++) {
-			int k = r * (SC + 1) + i;
-			tube_point(fx, fy, fw, fh, (float)i / SC * 2 - 1, v, 0.06f, &scan_xy[k * 2], &scan_xy[k * 2 + 1]);
-			scan_c[k] = rgba(0, 0, 0, ph ? 150 : 0);
-		}
-	}
-	for (int j = 0; j <= VR; j++)
-		for (int i = 0; i <= VC; i++) {
-			int k = j * (VC + 1) + i;
-			float u = (float)i / VC * 2 - 1, v = (float)j / VR * 2 - 1;
-			edge_xy[k * 2] = fx + fw * i / VC; edge_xy[k * 2 + 1] = fy + fh * j / VR;
-			float au = fabsf(u) * 1.02f, av = fabsf(v) * 1.04f;
-			float d = powf(powf(au, 5) + powf(av, 5), 0.2f), d2 = sqrtf(u * u * 0.8f + v * v);
-			float t = clamp01((d - 0.62f) / 0.38f), t2 = clamp01((d2 - 0.35f) / 0.9f);
-			float a = 1 - (1 - powf(t, 1.6f)) * (1 - 0.55f * t2 * t2);
-			edge_c[k] = rgba(0, 0, 0, (u8)(clamp01(a) * 255));
-		}
-	made_for[0] = fx; made_for[1] = fy; made_for[2] = fw; made_for[3] = fh;
-}
-
 static void backdrop(void) {
 	float fx = vl, fy = vt, fw = vr - vl, fh = vb - vt;
-	if (made_for[0] != fx || made_for[1] != fy || made_for[2] != fw || made_for[3] != fh) backdrop_make(fx, fy, fw, fh);
-	rect_v(fx, fy, fw, fh, rgba(0x1c, 0x24, 0x31, 255), rgba(0x0c, 0x10, 0x16, 255));
-	mesh(GC, GR, glow_xy[0], glow_c[0]);
-	mesh(GC, GR, glow_xy[1], glow_c[1]);
-	for (int r0 = 0; r0 < scan_rows - 1; r0 += SROWS) {
-		int rows = scan_rows - 1 - r0 < SROWS ? scan_rows - 1 - r0 : SROWS;
-		mesh(SC, rows, scan_xy + r0 * (SC + 1) * 2, scan_c + r0 * (SC + 1));
-	}
-	mesh(VC, VR, edge_xy, edge_c);
+	rect(fx, fy, fw, fh, rgba(6, 6, 8, 255));
+	Color line = rgba(0x25, 0x25, 0x2b, 255);
+	float cx = 320, cy = 240;
+	float x0 = cx - 24 * ceilf((cx - fx) / 24), y0 = cy - 24 * ceilf((cy - fy) / 24);
+	for (float x = x0; x < fx + fw; x += 24) rect(x, fy, 2, fh, line);
+	for (float y = y0; y < fy + fh; y += 24) rect(fx, y, fw, 2, line);
+	enum { C = 12, R = 10 };
+	static float xy[(C + 1) * (R + 1) * 2];
+	static Color col[(C + 1) * (R + 1)];
+	for (int j = 0; j <= R; j++)
+		for (int i = 0; i <= C; i++) {
+			int k = j * (C + 1) + i;
+			float x = fx + fw * i / C, y = fy + fh * j / R;
+			xy[k * 2] = x; xy[k * 2 + 1] = y;
+			float dx = (x - (fx + fw / 2)) / (fw / 2 * 1.414f), dy = (y - (fy + fh / 2)) / (fh / 2 * 1.414f);
+			float d = sqrtf(dx * dx + dy * dy);
+			float v = d < 0.4f ? 0 : (d - 0.4f) / 0.6f * 0.6f;
+			col[k] = rgba(0, 0, 0, (u8)(clamp01(v) * 255));
+		}
+	mesh(C, R, xy, col);
 }
 
 /* =============================================================== screens */
@@ -616,24 +583,7 @@ static void header(void) {
 	chip(x, 16, &tex_card_mc, 14, 18, sc.mc_name, sc.mc_info, sc.mc_info[0] != 0 && strncmp(sc.mc_info, "No ", 3));
 }
 
-/* A round button (A, B, X, Y, Z) */
-static void button_round(float cx, float cy, const char *l, Color body, Color label) {
-	circle(cx, cy, 9, rgba(10, 12, 16, 230));
-	circle(cx, cy, 8, body);
-	rect_v(cx - 5, cy - 7, 10, 6, rgba(255, 255, 255, 80), rgba(255, 255, 255, 0));
-	text(cx, cy, l, 10, label, 1, 0);
-}
-static void key_button(float cx, float cy, char k) {
-	char l[2] = { k, 0 };
-	switch (k) {
-	case 'A': button_round(cx, cy, l, rgba(60, 190, 110, 255), rgba(255, 255, 255, 255)); break;
-	case 'B': button_round(cx, cy, l, rgba(220, 70, 80, 255), rgba(255, 255, 255, 255)); break;
-	case 'Z': button_round(cx, cy, l, rgba(140, 120, 240, 255), rgba(255, 255, 255, 255)); break;
-	default: button_round(cx, cy, l, rgba(214, 218, 226, 255), rgba(30, 34, 40, 255)); break;
-	}
-}
-
-/* the description bar along the bottom, with the action's button (or a progress bar) at its right */
+/* the description bar along the bottom, with a progress bar at its right when there is one */
 static void status_bar(void) {
 	desc_bar(22, 374, 596, 52);
 	float tw = 572;
@@ -643,16 +593,69 @@ static void status_bar(void) {
 		float f = clamp01(sc.progress);
 		if (f > 0) rrect_v(bx, by, bw * f, 8, 3, rgba(255, 232, 138, 255), rgba(216, 176, 48, 255));
 		tw = 370;
-	} else if (sc.action[0]) {
-		float bw = text_width(sc.action, 12) + 54, bx = 606 - bw, by = 384, bh = 32;
-		rrect_v(bx, by, bw, bh, 4, rgba(72, 184, 240, 255), rgba(42, 146, 216, 255));
-		outline(bx, by, bw, bh, 4, 1, rgba(215, 225, 240, 120));
-		key_button(bx + 18, by + bh / 2, sc.action_key);
-		text(bx + 34, by + bh / 2, sc.action, 12, rgba(255, 255, 255, 255), 0, 0);
-		tw = bx - 50;
 	}
 	text(38, 391, sc.status1, 13, TEXT, 0, tw);
 	text(38, 410, sc.status2, 11, rgba(200, 205, 240, 255), 0, tw);
+}
+
+/* ------------------------------------------------- the controls (hints)
+ * As CubeVerse draws them: a dark pill for each button (A green, B red, Z
+ * purple), the Control Stick as a little stick, three dots, then what it does. */
+#define HINT_Y 452
+
+static void hint_stick(float x, float cy, float d) {
+	float r = d / 2, cx = x + r;
+	circle(cx, cy + 1, r + 1, rgba(0, 0, 0, 150));
+	circle(cx, cy, r, rgba(0x4a, 0x4a, 0x52, 255));
+	circle(cx, cy, r * 0.78f, rgba(0x2a, 0x2a, 0x30, 255));
+	float nr = d * 0.30f;
+	circle(cx, cy + 1, nr, rgba(0, 0, 0, 128));
+	for (int i = 4; i >= 0; i--)
+		circle(cx, cy, nr * (i + 1) / 5.0f, (i & 1) ? rgba(0x9a, 0x9b, 0xa6, 255) : rgba(0xd6, 0xd7, 0xde, 255));
+}
+
+static float hint_one(const char *h, float x, float cy, bool draw) {
+	char key[8] = "";
+	const char *colon = strchr(h, ':');
+	const char *label = colon ? colon + 1 : h;
+	if (colon && colon - h < 7) { memcpy(key, h, colon - h); key[colon - h] = 0; }
+	float w = 0;
+	if (!strcmp(key, "S")) {
+		if (draw) hint_stick(x, cy, 20);
+		w = 20;
+	} else if (key[0]) {
+		const char *t = !strcmp(key, "ST") ? "START" : key;
+		Color tc = rgba(0xd8, 0xda, 0xe6, 255), ring = rgba(255, 255, 255, 36);
+		bool glow = false;
+		if (!strcmp(key, "A")) { tc = rgba(0x5f, 0xe3, 0x9a, 255); ring = rgba(95, 227, 154, 97); glow = true; }
+		if (!strcmp(key, "B")) { tc = rgba(0xff, 0x5c, 0x7c, 255); ring = rgba(255, 92, 124, 97); glow = true; }
+		if (!strcmp(key, "Z")) { tc = rgba(0xb9, 0xa2, 0xff, 255); ring = rgba(185, 162, 255, 97); glow = true; }
+		float pw = text_width(t, 11) + 12;
+		if (pw < 20) pw = 20;
+		if (draw) {
+			float y = cy - 10;
+			if (glow) rrect_v(x - 2, y - 2, pw + 4, 24, 12, alpha(ring, 0.45f), alpha(ring, 0.45f));
+			rrect_v(x, y, pw, 20, 10, rgba(0x3c, 0x3c, 0x46, 255), rgba(0x08, 0x08, 0x0a, 255));
+			outline(x, y, pw, 20, 10, 1, ring);
+			text(x + pw / 2, cy, t, 11, tc, 1, 0);
+		}
+		w = pw;
+	}
+	if (key[0]) {
+		if (draw) for (int i = 0; i < 3; i++) circle(x + w + 4 + i * 4, cy + 1, 1.1f, rgba(0xc9, 0xcb, 0xd6, 255));
+		w += 16;
+	}
+	if (draw) text(x + w, cy, label, 12, rgba(0xdf, 0xe4, 0xff, 255), 0, 0);
+	return w + text_width(label, 12);
+}
+
+static void hints_row(void) {
+	if (sc.hint_count <= 0) return;
+	float total = 0, gap = 30;
+	for (int i = 0; i < sc.hint_count; i++) total += hint_one(sc.hints[i], 0, 0, false);
+	if (total + gap * (sc.hint_count - 1) > 580) gap = fmaxf(10, (580 - total) / (sc.hint_count - 1));
+	float x = 320 - (total + gap * (sc.hint_count - 1)) / 2;
+	for (int i = 0; i < sc.hint_count; i++) x += hint_one(sc.hints[i], x, HINT_Y, true) + gap;
 }
 
 /* the main screen's pictures */
@@ -727,7 +730,7 @@ static void tools_screen(void) {
 	                                             "Format the card", "Choose the SD card", "Settings" };
 	static const char *desc[UI_TOOLS_COUNT] = { "One file with everything on it", "From a whole-card backup",
 	                                            "Choose saves to remove", "Erase everything on it",
-	                                            "Use another adapter", "Picture size and position" };
+	                                            "Use another adapter", "Picture, updates, exit" };
 	panel(22, 62, 596, 300);
 	text(34, 80, "Card tools", 12, TITLE, 0, 380);
 	rule(32, 92, 576);
@@ -740,6 +743,64 @@ static void tools_screen(void) {
 		text(x + 80, y + 28, names[i], 14, i == 3 ? rgba(255, 170, 170, 255) : TEXT, 0, w - 90);
 		text(x + 80, y + 48, desc[i], 11, SOFT, 0, w - 90);
 		if (on) gold_ring(x, y, w, h);
+	}
+}
+
+/* the Settings page */
+static void settings_screen(void) {
+	panel(22, 62, 596, 300);
+	text(34, 80, "Settings", 12, TITLE, 0, 380);
+	rule(32, 92, 576);
+	for (int i = 0; i < sc.orow_count; i++) {
+		float x = 34, y = 104 + i * 40, w = 566, h = 32, cy = y + h / 2;
+		bool on = i == sc.osel;
+		if (i >= 4) y += 8, cy += 8;   /* a little gap before the GCMM exFAT rows */
+		rect_v(x, y, w, h, rgba(76, 94, 114, on ? 150 : 80), rgba(40, 54, 70, on ? 160 : 90));
+		rect(x + 1, y + 1, w - 2, 1, rgba(255, 255, 255, 30));
+		text(x + 16, cy, sc.orows[i].label, 13, TEXT, 0, 260);
+		const char *v = sc.orows[i].value;
+		if (v[0] == 2) text(x + w - 16, cy, v + 1, 12, SOFT, 2, 260);
+		else if (v[0] && v[0] != 1) {
+			float vx = x + w - 110;
+			tri(vx - 66, cy, vx - 59, cy - 6, vx - 59, cy + 6, on ? GOLD : DIM);
+			tri(vx + 66, cy, vx + 59, cy - 6, vx + 59, cy + 6, on ? GOLD : DIM);
+			text(vx, cy, v, 13, on ? TEXT : SOFT, 1, 110);
+		}
+		if (on) gold_ring(x, y, w, h);
+	}
+}
+
+/* the Update page */
+static void update_screen(void) {
+	panel(22, 62, 596, 300);
+	text(34, 80, "Update from GitHub", 12, TITLE, 0, 380);
+	rule(32, 92, 576);
+	image(&tex_logo_title, 40, 106, LOGO_TITLE_W, LOGO_TITLE_H, 0, 0, rgba(255, 255, 255, 255));
+	text(130, 116, "This version", 11, SOFT, 0, 0);
+	text(250, 116, sc.upd_now, 13, TEXT, 0, 0);
+	text(130, 138, "Newest on GitHub", 11, SOFT, 0, 0);
+	text(250, 138, sc.upd_new[0] ? sc.upd_new : "Checking\x85", 13, sc.upd_new[0] ? GOLD : SOFT, 0, 0);
+	rule(32, 166, 576);
+	if (!sc.upd_notes[0]) return;
+	text(40, 182, "What's new", 12, TITLE, 0, 0);
+	/* the notes, wrapped */
+	const char *p = sc.upd_notes;
+	float y = 204;
+	for (int line = 0; line < 8 && *p; line++, y += 19) {
+		char buf[160];
+		int n = 0, last_space = -1;
+		while (p[n] && p[n] != '\n' && n < (int)sizeof(buf) - 1) {
+			buf[n] = p[n]; buf[n + 1] = 0;
+			if (p[n] == ' ') last_space = n;
+			if (text_width(buf, 12) > 548) { n = last_space > 0 ? last_space : n; break; }
+			n++;
+		}
+		buf[n] = 0;
+		bool bullet = buf[0] == '-' || buf[0] == '*' || buf[0] == '\x7f';
+		if (bullet) circle(46, y, 2, GOLD);
+		text(bullet ? 56 : 40, y, bullet ? buf + 1 + (buf[1] == ' ') : buf, 12, TEXT, 0, 548);
+		p += n;
+		while (*p == ' ' || *p == '\n') p++;
 	}
 }
 
@@ -817,6 +878,7 @@ static void list_screen(void) {
 }
 
 static void splash_screen(void) {
+	if (!sc.splash_ready) return;   /* (the screen shape isn't known yet) */
 	float k = clamp01((now_ms() - shown_at) / 600.0f);
 	k = k * k * (3 - 2 * k);
 	float w = LOGO_SPLASH_W, h = LOGO_SPLASH_H;
@@ -889,9 +951,12 @@ static void draw_frame(void) {
 		header();
 		if (sc.screen == UI_LIST) list_screen();
 		else if (sc.screen == UI_TOOLS) tools_screen();
+		else if (sc.screen == UI_UPDATE) update_screen();
+		else if (sc.screen == UI_SETTINGS) settings_screen();
 		else main_screen();
 		status_bar();
 		overlay_panel();
+		hints_row();   /* (over the panel's shade: they're for the panel too) */
 	}
 	U();
 }
