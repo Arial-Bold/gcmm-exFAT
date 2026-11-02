@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Makes source/ui_assets.c and .h: the text font (M PLUS Rounded 1c, OFL,
-see tools/fonts/OFL.txt) as two texture atlases, the GCMM logo at two sizes,
+see tools/fonts/OFL.txt) as two texture atlases, the GCMM exFAT logo (the card is the logo) at two sizes,
 and the memory card and SD card pictures, all in the GameCube's own texture
 formats. Run it again after changing anything here:
 
@@ -132,12 +132,60 @@ def shadowed(im, r, off, a=150):
     c.alpha_composite(im, (pad, pad))
     return c
 
-def logo():
-    """logo A: the indigo card beside the GCMM wordmark, MEMORY MANAGER in gold below"""
-    c = Image.new('RGBA', (1400, 420), (0, 0, 0, 0))
-    c.alpha_composite(card(220, 290, (88, 74, 210), INDIGO_D), (30, 60))
-    c.alpha_composite(tinted(text_img('GCMM', FONT_X, 230, sp=6), (255, 255, 255), (200, 210, 225)), (290, 50))
-    c.alpha_composite(tinted(text_img('MEMORY MANAGER', FONT, 64, sp=10), GOLD_HI, (200, 160, 40)), (296, 300))
+def badge(label, h):
+    """the gold exFAT badge: a rounded gold block with the word cut in dark"""
+    f = ImageFont.truetype(FONT_X, int(h * 0.62))
+    tmp = ImageDraw.Draw(Image.new('L', (1, 1)))
+    tw = tmp.textlength(label, font=f)
+    w = int(tw + h * 0.7)
+    b = vgrad(w, h, (255, 222, 110), (214, 168, 40))
+    m = Image.new('L', (w, h), 0); ImageDraw.Draw(m).rounded_rectangle([0, 0, w - 1, h - 1], radius=h // 5, fill=255)
+    b.putalpha(m)
+    d = ImageDraw.Draw(b)
+    d.text((w / 2, h / 2), label, font=f, fill=(40, 30, 8, 255), anchor='mm')
+    return b
+
+def spaced_to(s, font, target, track, top, bot):
+    """a line of text sized (with light letterspacing) to be exactly `target` wide"""
+    size = 60
+    for _ in range(5):
+        size = size * target / text_img(s, font, size, size * track).width
+    im = text_img(s, font, int(size), int(size) * track)
+    return tinted(im.resize((target, max(1, round(im.height * target / im.width))), Image.LANCZOS), top, bot)
+
+def logo(tagline=True):
+    """the card is the logo: a wide indigo memory card with GCMM on its label,
+    gold contacts and exFAT along the bottom edge, MEMORY MANAGER under it
+    (the splash screen's). The header's has fewer contacts and a bigger exFAT."""
+    word = tinted(text_img('GCMM', FONT_X, 190, sp=8), (255, 255, 255), (225, 230, 245))
+    cut = 110
+    CW = word.width + 200
+    row = 96 if tagline else 130
+    lx0, ly0, lx1 = 60, 46, CW - 60 - cut // 2
+    ly1 = ly0 + word.height + 70
+    CH = ly1 + 40 + row + 44
+    body = vgrad(CW, CH, (110, 96, 236), (44, 34, 150))
+    m = Image.new('L', (CW, CH), 0); d = ImageDraw.Draw(m)
+    d.rounded_rectangle([0, 0, CW - 1, CH - 1], radius=40, fill=255)
+    d.polygon([(CW - cut, 0), (CW, 0), (CW, cut)], fill=0)      # the clipped corner
+    body.putalpha(m)
+    lab = Image.new('RGBA', (CW, CH), (0, 0, 0, 0))
+    ImageDraw.Draw(lab).rounded_rectangle([lx0, ly0, lx1, ly1], radius=22, fill=(255, 255, 255, 40))
+    body.alpha_composite(lab)
+    body.alpha_composite(word, ((lx0 + lx1) // 2 - word.width // 2, (ly0 + ly1) // 2 - word.height // 2))
+    dd = ImageDraw.Draw(body)
+    cy0, cy1 = ly1 + 40, CH - 44
+    for i in range(7 if tagline else 5):
+        x = 60 + i * 52
+        dd.rounded_rectangle([x, cy0, x + 32, cy1], radius=5, fill=(255, 226, 120, 255))
+    dd.text((CW - 64, (cy0 + cy1) / 2), 'exFAT', font=ImageFont.truetype(FONT_X, int((cy1 - cy0) * 1.05)), fill=(255, 226, 120, 255), anchor='rm')
+    out = shadowed(body, 10 if tagline else 6, (0, 8 if tagline else 4), 150)
+    if not tagline:
+        return out.crop(out.getbbox())
+    mm = spaced_to('MEMORY MANAGER', FONT, CW - 40, 0.3, (200, 210, 230), (150, 160, 185))
+    c = Image.new('RGBA', (out.width, out.height + 20 + mm.height), (0, 0, 0, 0))
+    c.alpha_composite(out, (0, 0))
+    c.alpha_composite(mm, (out.width // 2 - mm.width // 2, out.height + 14))
     return c.crop(c.getbbox())
 
 def sized(img, w=None, h=None):
@@ -175,9 +223,8 @@ def main():
         c.append('};')
         c.append(f'const UiFont font_{name} = {{ font_{name}_tex, {atlas.width}, {atlas.height}, {px}, {asc}, {desc}, font_{name}_glyphs }};\n')
         h.append(f'extern const UiFont font_{name};   /* {px} px */')
-    lg = logo()
-    pics = [('logo_title', pad_to(sized(lg, h=36), 4, 4)),
-            ('logo_splash', pad_to(sized(lg, w=384), 4, 4)),
+    pics = [('logo_title', pad_to(sized(logo(False), h=44), 4, 4)),
+            ('logo_splash', pad_to(sized(logo(True), h=216), 4, 4)),
             ('card_mc', pad_to(card(64, 84, (88, 74, 210), INDIGO_D), 4, 4)),
             ('card_sd', pad_to(card(64, 84, (235, 238, 245), (170, 180, 195)), 4, 4)),
             ('card_file', pad_to(card(16, 20, (210, 214, 222), (150, 160, 175)), 4, 4))]
