@@ -28,9 +28,9 @@ typedef struct {
 
 extern UiSettings ui_set;
 
-void ui_settings_path(const char *path);   /* where settings.ini is kept (once the SD card is ready) */
+void ui_settings_path(const char *path, const char *old_path);   /* where the settings are kept (once the SD card is ready), and an older file to read if that one isn't there yet */
 void ui_settings_load(void);
-void ui_settings_save(void);
+bool ui_settings_save(void);   /* false if the SD card wouldn't take them */
 void ui_settings_changed(void);             /* call after changing ui_set (the video mode follows) */
 const char *ui_resolution_name(int r);
 
@@ -59,6 +59,7 @@ void ui_progress(float f);                              /* a bar in the descript
 
 /* the header: the memory card and the SD card */
 void ui_main_cards(const char *mc_name, const char *mc_info, const char *sd_name, const char *sd_info);
+void ui_main_card2(const char *mc_name, const char *mc_info);   /* a second memory card ("" for none) */
 
 /* main screen: the three jobs (0 Back up, 1 Restore, 2 Card tools; -1 none chosen) */
 void ui_main_select(int tile);

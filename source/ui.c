@@ -24,9 +24,12 @@
 /* ================================================================ settings */
 
 UiSettings ui_set = { UI_RES_AUTO, 0, 1, 0 };
-static char settings_file[300];
+static char settings_file[300], settings_old[300];
 
-void ui_settings_path(const char *path) { snprintf(settings_file, sizeof(settings_file), "%s", path); }
+void ui_settings_path(const char *path, const char *old_path) {
+	snprintf(settings_file, sizeof(settings_file), "%s", path);
+	snprintf(settings_old, sizeof(settings_old), "%s", old_path ? old_path : "");
+}
 
 const char *ui_resolution_name(int r) {
 	switch (r) {
@@ -39,6 +42,7 @@ const char *ui_resolution_name(int r) {
 void ui_settings_load(void) {
 	if (!settings_file[0]) return;
 	FILE *f = fopen(settings_file, "r");
+	if (!f && settings_old[0]) f = fopen(settings_old, "r");   /* from an earlier version */
 	if (!f) return;
 	char line[128];
 	while (fgets(line, sizeof(line), f)) {
@@ -55,21 +59,24 @@ void ui_settings_load(void) {
 	ui_settings_changed();
 }
 
-void ui_settings_save(void) {
-	if (!settings_file[0]) return;
+bool ui_settings_save(void) {
+	if (!settings_file[0]) return false;
 	/* the folder may not exist yet (first run) */
 	char dir[300];
 	snprintf(dir, sizeof(dir), "%s", settings_file);
 	char *slash = strrchr(dir, '/');
 	if (slash && slash > strchr(dir, ':') + 1) { *slash = 0; mkdir(dir, 0777); }
 	FILE *f = fopen(settings_file, "w");
-	if (!f) return;
-	fprintf(f, "# GCMM exFAT settings\n");
-	fprintf(f, "display.resolution=%d\n", ui_set.resolution);
-	fprintf(f, "display.widescreen=%d\n", ui_set.widescreen);
-	fprintf(f, "display.full_width=%d\n", ui_set.full_width);
-	fprintf(f, "display.overscan=%d\n", ui_set.overscan);
-	fclose(f);
+	if (!f) return false;
+	bool ok = fprintf(f, "# GCMM exFAT settings\n") > 0;
+	ok = fprintf(f, "display.resolution=%d\n", ui_set.resolution) > 0 && ok;
+	ok = fprintf(f, "display.widescreen=%d\n", ui_set.widescreen) > 0 && ok;
+	ok = fprintf(f, "display.full_width=%d\n", ui_set.full_width) > 0 && ok;
+	ok = fprintf(f, "display.overscan=%d\n", ui_set.overscan) > 0 && ok;
+	ok = fflush(f) == 0 && ok;
+	fsync(fileno(f));   /* straight onto the card, not left waiting in a cache */
+	ok = fclose(f) == 0 && ok;
+	return ok;
 }
 
 /* ============================================================ the scene */
@@ -86,7 +93,7 @@ static struct {
 	char action[48], action_key;
 	float progress;
 	/* header */
-	char mc_name[32], mc_info[48], sd_name[32], sd_info[48];
+	char mc_name[32], mc_info[48], mc2_name[32], mc2_info[48], sd_name[32], sd_info[48];
 	/* main */
 	int main_sel;
 	/* list */
@@ -121,6 +128,9 @@ void ui_main_cards(const char *mn, const char *mi, const char *sn, const char *s
 	cpy(sc.mc_name, mn, sizeof(sc.mc_name)); cpy(sc.mc_info, mi, sizeof(sc.mc_info));
 	cpy(sc.sd_name, sn, sizeof(sc.sd_name)); cpy(sc.sd_info, si, sizeof(sc.sd_info));
 	U();
+}
+void ui_main_card2(const char *mn, const char *mi) {
+	L(); cpy(sc.mc2_name, mn, sizeof(sc.mc2_name)); cpy(sc.mc2_info, mi, sizeof(sc.mc2_info)); U();
 }
 void ui_main_select(int r) { L(); sc.main_sel = r; U(); }
 void ui_list_header(const char *t, const char *r) { L(); cpy(sc.list_title, t, TXT); cpy(sc.list_right, r, sizeof(sc.list_right)); U(); }
@@ -585,7 +595,8 @@ static void backdrop(void) {
 /* the header: the logo, and the memory card and SD card at the right */
 static float chip(float right, float y, GXTexObj *pic, float pw, float ph, const char *name, const char *info, bool on) {
 	float w = 40 + fmaxf(text_width(name, 11), text_width(info, 10));
-	if (w > 200) w = 200;
+	float most = sc.mc2_name[0] ? 150 : 200;   /* three chips: a little narrower */
+	if (w > most) w = most;
 	float x = right - w;
 	rrect_v(x, y, w, 32, 6, rgba(10, 14, 20, 170), rgba(10, 14, 20, 170));
 	outline(x, y, w, 32, 6, 1, rgba(200, 210, 230, 70));
@@ -596,9 +607,12 @@ static float chip(float right, float y, GXTexObj *pic, float pw, float ph, const
 }
 
 static void header(void) {
-	image(&tex_logo_title, 22, 14, LOGO_TITLE_W, LOGO_TITLE_H, 0, 0, rgba(255, 255, 255, 255));
-	float w = chip(618, 16, &tex_card_sd, 14, 18, sc.sd_name[0] ? sc.sd_name : "No SD card", sc.sd_info, sc.sd_name[0] != 0);
-	chip(618 - w - 8, 16, &tex_card_mc, 14, 18, sc.mc_name, sc.mc_info, true);
+	image(&tex_logo_title, 22, 32 - LOGO_TITLE_H / 2, LOGO_TITLE_W, LOGO_TITLE_H, 0, 0, rgba(255, 255, 255, 255));   /* centred on the chips */
+	/* from the right: the SD card, then the memory cards (B, then A to its left) */
+	float x = 618;
+	x -= chip(x, 16, &tex_card_sd, 14, 18, sc.sd_name[0] ? sc.sd_name : "No SD card", sc.sd_info, sc.sd_name[0] != 0) + 8;
+	if (sc.mc2_name[0]) x -= chip(x, 16, &tex_card_mc, 14, 18, sc.mc2_name, sc.mc2_info, true) + 8;
+	chip(x, 16, &tex_card_mc, 14, 18, sc.mc_name, sc.mc_info, sc.mc_info[0] != 0 && strncmp(sc.mc_info, "No ", 3));
 }
 
 /* A round button (A, B, X, Y, Z) */

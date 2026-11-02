@@ -237,24 +237,47 @@ void UpdateSDInfo(void)
 	}
 }
 
-/* The header: what's in the memory card slot (only looks: doesn't mount
- * the card), and the SD card */
+/* What's in a memory card slot, for the header (only looks: doesn't mount
+ * the card). Returns 1 for a memory card, 0 for an empty slot, -1 for
+ * something else in it. */
+static int slot_info(s32 slot, char *info, int n)
+{
+	s32 size = 0, sect = 0;
+	s32 r = CARD_ProbeEx(slot, &size, &sect);
+	if ((r == CARD_ERROR_READY || r == CARD_ERROR_BUSY) && size > 0) { snprintf(info, n, "%d blocks", size * 16 - 5); return 1; }
+	if (r == CARD_ERROR_BUSY) { snprintf(info, n, "Checking\x85"); return 1; }
+	if (r == CARD_ERROR_WRONGDEVICE) { snprintf(info, n, "Not a memory card"); return -1; }
+	snprintf(info, n, "No card in Slot %c", slot == CARD_SLOTB ? 'B' : 'A');
+	return 0;
+}
+
+/* The header: each memory card (both, when there's one in each slot), and
+ * the SD card */
 void UpdateMainCards(void)
 {
-	char mc_name[32], mc_info[48];
-	s32 size = 0, sect = 0;
+	char name[2][32], info[2][48], tmp[48];
+	int shown = 0;
+	bool free_a = CUR_DEVICE != DEV_GCSDA, free_b = CUR_DEVICE != DEV_GCSDB;   /* an SD Gecko takes its slot */
 	pick_card_slot();   /* (follows a card moved to the other slot) */
-	s32 r = CARD_ProbeEx(MEM_CARD, &size, &sect);
-	snprintf(mc_name, sizeof(mc_name), "Memory Card %c", MEM_CARD ? 'B' : 'A');
-	if ((r == CARD_ERROR_READY || r == CARD_ERROR_BUSY) && size > 0)
-		snprintf(mc_info, sizeof(mc_info), "%d blocks", size * 16 - 5);
-	else if (r == CARD_ERROR_WRONGDEVICE)
-		snprintf(mc_info, sizeof(mc_info), "Not a memory card");
-	else if (r == CARD_ERROR_BUSY)
-		snprintf(mc_info, sizeof(mc_info), "Checking\x85");
-	else
-		snprintf(mc_info, sizeof(mc_info), "No card in Slot %c", MEM_CARD ? 'B' : 'A');
-	ui_main_cards(mc_name, mc_info, have_sd ? DeviceShortName(CUR_DEVICE) : "", have_sd ? sd_free : "");
+	for (s32 slot = CARD_SLOTA; slot <= CARD_SLOTB; slot++) {
+		if (!(slot == CARD_SLOTA ? free_a : free_b)) continue;
+		if (slot_info(slot, tmp, sizeof(tmp)) == 1) {
+			snprintf(name[shown], sizeof(name[0]), "Memory Card %c", slot == CARD_SLOTB ? 'B' : 'A');
+			snprintf(info[shown], sizeof(info[0]), "%s", tmp);
+			shown++;
+		}
+	}
+	if (shown == 0) {
+		/* no memory card: say what's in the slot in use */
+		snprintf(name[0], sizeof(name[0]), "Memory Card %c", MEM_CARD ? 'B' : 'A');
+		slot_info(MEM_CARD, info[0], sizeof(info[0]));
+		if (free_a && free_b && !strncmp(info[0], "No ", 3)) {
+			snprintf(name[0], sizeof(name[0]), "Memory Card");
+			snprintf(info[0], sizeof(info[0]), "No card in either slot");
+		}
+	}
+	ui_main_cards(name[0], info[0], have_sd ? DeviceShortName(CUR_DEVICE) : "", have_sd ? sd_free : "");
+	ui_main_card2(shown == 2 ? name[1] : "", shown == 2 ? info[1] : "");
 }
 
 /* ------------------------------------------------------------- settings */
@@ -357,8 +380,8 @@ static void SettingsMenu(void)
 
 	ui_overlay(UI_OVERLAY_NONE, "");
 	if (memcmp(&before, &ui_set, sizeof(ui_set))) {
-		if (have_sd) ui_settings_save();
-		else WaitPrompt("No SD card: these settings last until GCMM exFAT closes.");
+		if (!have_sd) WaitPrompt("No SD card: these settings last until GCMM exFAT closes.");
+		else if (!ui_settings_save()) WaitPrompt("Couldn't save the settings to the SD card. They last until GCMM exFAT closes.");
 	}
 	WaitRelease();
 }

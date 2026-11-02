@@ -189,13 +189,15 @@ int device_select()
 	return ChooseDevice(list, count);
 }
 
-/* settings.ini lives beside GCMM's own .dol when that folder is on the SD
- * card in use, or in MCBACKUP otherwise */
+/* The settings are kept in one place, MCBACKUP/gcmm.ini on the SD card,
+ * however GCMM exFAT was started (a loader doesn't always say where the .dol
+ * is, so a file beside it could be missed next time). An older settings.ini
+ * beside the .dol is read if there's no gcmm.ini yet. */
 static void find_settings(int argc, char *argv[])
 {
-	char path[300];
-	path[0] = 0;
-	if (!have_sd) { ui_settings_path(""); return; }
+	char path[300], old[300];
+	path[0] = old[0] = 0;
+	if (!have_sd) { ui_settings_path("", ""); return; }
 	if (argc > 0 && argv && argv[0]) {
 		const char *p = strstr(argv[0], ":/");
 		const char *slash = strrchr(argv[0], '/');
@@ -205,14 +207,12 @@ static void find_settings(int argc, char *argv[])
 			if (n > 0 && n < (int)sizeof(dir)) {
 				memcpy(dir, p + 2, n);
 				dir[n] = 0;
-				snprintf(path, sizeof(path), "%s:/%s", fatpath, dir);
-				if (isdir_sd(path) == 1) snprintf(path, sizeof(path), "%s:/%s/settings.ini", fatpath, dir);
-				else path[0] = 0;
+				snprintf(old, sizeof(old), "%s:/%s/settings.ini", fatpath, dir);
 			}
 		}
 	}
-	if (!path[0]) snprintf(path, sizeof(path), "%s:/%s/gcmm.ini", fatpath, MCSAVES);
-	ui_settings_path(path);
+	snprintf(path, sizeof(path), "%s:/%s/gcmm.ini", fatpath, MCSAVES);
+	ui_settings_path(path, old);
 }
 
 /* Is there a memory card in this slot? (only looks: doesn't mount it) */
@@ -742,6 +742,7 @@ int main (int argc, char *argv[])
 			CUR_DEVICE = device_select();
 			use_device();
 			find_settings(argc, argv);
+			ui_settings_load();   /* (this SD card's) */
 			break;
 		}
 

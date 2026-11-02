@@ -12,11 +12,11 @@ typedef struct { const u8 *tex; u16 w, h; u8 px, ascent, descent; const UiGlyph 
 extern const UiFont font_small;   /* 14 px */
 extern const UiFont font_large;   /* 24 px */
 
-#define LOGO_TITLE_W 136
-#define LOGO_TITLE_H 32
+#define LOGO_TITLE_W 72
+#define LOGO_TITLE_H 44
 extern const u8 logo_title_tex[];   /* RGBA8 */
-#define LOGO_SPLASH_W 440
-#define LOGO_SPLASH_H 108
+#define LOGO_SPLASH_W 336
+#define LOGO_SPLASH_H 216
 extern const u8 logo_splash_tex[];   /* RGBA8 */
 #define CARD_MC_W 64
 #define CARD_MC_H 84
