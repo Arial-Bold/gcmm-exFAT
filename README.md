@@ -1,6 +1,9 @@
 # GCMM exFAT
 
-GCMM exFAT backs up, restores and deletes the saves on your GameCube memory cards, using an SD card. It's an unofficial fork of [suloku's GCMM](https://github.com/suloku/gcmm) for the GameCube, with:
+GCMM exFAT backs up, restores and deletes the saves on your GameCube memory cards, using an SD card. It's an unofficial fork of [suloku's GCMM](https://github.com/suloku/gcmm) for the GameCube.
+
+<img width="1280" height="960" alt="gcmm-exfat-01-splash" src="https://github.com/user-attachments/assets/85549d55-05ce-45ff-afe6-34bb9d511024" />
+
 
 - **exFAT SD cards**, as well as FAT and FAT32
 - a new look in the style of the GameCube's own menus, built around the three jobs: **Back up**, **Restore** and **Card tools**
@@ -15,11 +18,17 @@ It runs on the GameCube only.
 
 ## What it does
 
+<img width="1280" height="960" alt="gcmm-exfat-02-main" src="https://github.com/user-attachments/assets/f1a6b81a-837a-4840-ae58-24a3c49fed3b" /><img width="1280" height="960" alt="gcmm-exfat-03-back-up" src="https://github.com/user-attachments/assets/58345ec1-35c0-4c17-b827-566bb23f3176" />
+
+
 The main screen has three big choices:
 
 - **Back up**: the saves on the memory card, each marked **New** (no backup yet), **Changed** (newer than its backup) or **Backed up**. The new and changed ones start out ticked; X backs up the ticked saves.
 - **Restore**: the saves (.gci, .gcs and .sav) in `MCBACKUP` on the SD card, and the folders in it, each marked whether it's on the memory card already. Tick the ones you want and press X. If some are on the card already, you're asked once whether to replace them.
 - **Card tools**: a page of its own to back up a whole memory card as a .raw image, restore a whole card (.raw, .gcp and .mci), delete saves, format the card, choose the SD card, and open Settings.
+
+
+![Uploading gcmm-exfat-03-back-up.png…]()
 
 Every save shows its own icon and comment. The bar along the bottom says how many saves you've ticked and where they'll go, and under it are the buttons you can press.
 
