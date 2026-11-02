@@ -95,7 +95,7 @@ static struct {
 	/* header */
 	char mc_name[32], mc_info[48], mc2_name[32], mc2_info[48], sd_name[32], sd_info[48];
 	/* main */
-	int main_sel;
+	int main_sel, tools_sel;
 	/* list */
 	char list_title[TXT], list_right[48];
 	bool checkable;
@@ -132,6 +132,7 @@ void ui_main_cards(const char *mn, const char *mi, const char *sn, const char *s
 void ui_main_card2(const char *mn, const char *mi) {
 	L(); cpy(sc.mc2_name, mn, sizeof(sc.mc2_name)); cpy(sc.mc2_info, mi, sizeof(sc.mc2_info)); U();
 }
+void ui_tools_select(int r) { L(); sc.tools_sel = r; U(); }
 void ui_main_select(int r) { L(); sc.main_sel = r; U(); }
 void ui_list_header(const char *t, const char *r) { L(); cpy(sc.list_title, t, TXT); cpy(sc.list_right, r, sizeof(sc.list_right)); U(); }
 void ui_list_clear(void) { L(); sc.row_used = 0; sc.list_sel = -1; memset(sc.rows, 0, sizeof(sc.rows)); U(); }
@@ -692,6 +693,56 @@ static void main_screen(void) {
 	}
 }
 
+/* the Card tools page: a tile for each job, each with a little picture */
+static void tool_picture(int t, float cx, float cy) {
+	const Color white = rgba(255, 255, 255, 255);
+	switch (t) {
+	case 0: case 1: {   /* the whole card to the SD card, or back */
+		GXTexObj *a = t == 0 ? &tex_card_mc : &tex_card_sd, *b = t == 0 ? &tex_card_sd : &tex_card_mc;
+		image(a, cx - 30, cy - 14, 21, 28, 0, 0, white);
+		image(b, cx + 9, cy - 14, 21, 28, 0, 0, white);
+		tri(cx + 6, cy, cx, cy - 5, cx, cy + 5, GOLD);
+		rect(cx - 6, cy - 2, 7, 4, GOLD);
+		break;
+	}
+	case 2: case 3:     /* delete saves, format: the card with a red mark */
+		image(&tex_card_mc, cx - 16, cy - 19, 28, 37, 0, 0, white);
+		circle(cx + 12, cy + 10, 10, rgba(10, 12, 16, 230));
+		circle(cx + 12, cy + 10, 9, rgba(220, 70, 80, 255));
+		if (t == 2) rect(cx + 7, cy + 9, 10, 3, white);              /* minus: take some away */
+		else { rect(cx + 11, cy + 4, 3, 8, white); rect(cx + 11, cy + 14, 3, 3, white); }   /* "!": everything goes */
+		break;
+	case 4:             /* another SD card adapter */
+		image(&tex_card_sd, cx - 22, cy - 18, 24, 32, 0, 0, rgba(255, 255, 255, 120));
+		image(&tex_card_sd, cx - 6, cy - 14, 24, 32, 0, 0, white);
+		break;
+	default:            /* settings */
+		gear(cx, cy, 15, rgba(214, 218, 226, 255), rgba(36, 46, 56, 255));
+		break;
+	}
+}
+
+static void tools_screen(void) {
+	static const char *names[UI_TOOLS_COUNT] = { "Back up the whole card", "Restore a whole card", "Delete saves",
+	                                             "Format the card", "Choose the SD card", "Settings" };
+	static const char *desc[UI_TOOLS_COUNT] = { "One file with everything on it", "From a whole-card backup",
+	                                            "Choose saves to remove", "Erase everything on it",
+	                                            "Use another adapter", "Picture size and position" };
+	panel(22, 62, 596, 300);
+	text(34, 80, "Card tools", 12, TITLE, 0, 380);
+	rule(32, 92, 576);
+	for (int i = 0; i < UI_TOOLS_COUNT; i++) {
+		float x = 34 + (i % 2) * 290, y = 104 + (i / 2) * 84, w = 282, h = 74;
+		bool on = i == sc.tools_sel && sc.overlay == UI_OVERLAY_NONE;
+		rect_v(x, y, w, h, rgba(76, 94, 114, on ? 150 : 80), rgba(40, 54, 70, on ? 160 : 90));
+		rect(x + 1, y + 1, w - 2, 1, rgba(255, 255, 255, 30));
+		tool_picture(i, x + 40, y + h / 2);
+		text(x + 80, y + 28, names[i], 14, i == 3 ? rgba(255, 170, 170, 255) : TEXT, 0, w - 90);
+		text(x + 80, y + 48, desc[i], 11, SOFT, 0, w - 90);
+		if (on) gold_ring(x, y, w, h);
+	}
+}
+
 static void folder_glyph(float x, float y) {
 	tri(x, y, x + 7, y, x + 9, y + 3, GOLD);
 	rect(x, y, 7, 3, GOLD);
@@ -836,7 +887,9 @@ static void draw_frame(void) {
 		splash_screen();
 	} else {
 		header();
-		if (sc.screen == UI_LIST) list_screen(); else main_screen();
+		if (sc.screen == UI_LIST) list_screen();
+		else if (sc.screen == UI_TOOLS) tools_screen();
+		else main_screen();
 		status_bar();
 		overlay_panel();
 	}

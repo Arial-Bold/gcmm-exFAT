@@ -412,41 +412,54 @@ static void main_status(void)
 	writeStatusBar(main_line, "Pick one with the stick and press A. START: Settings.");
 }
 
-/* Card tools: the jobs that are needed less often */
-static int CardTools(void)
+/* Card tools: a page of its own (like Back up and Restore) with the jobs
+ * that are needed less often. After a job it comes back here; B goes back
+ * to the main screen. */
+static bool in_tools = false;
+static int tools_sel = 0;
+
+static void tools_status(void)
 {
-	static const char *rows[6] = { "Back up the whole card", "Restore a whole card", "Delete saves",
-	                               "Format the card", "Choose the SD card", "Settings" };
-	static const char *help[6] = {
+	static const char *help[UI_TOOLS_COUNT] = {
 		"Copies everything on the memory card to one file on the SD card.",
 		"Puts a whole-card copy from the SD card back on the memory card.",
 		"Choose saves to delete from the memory card.",
 		"Erases everything on the memory card.",
 		"Use another SD card adapter.",
-		"Picture size and position.",
+		"Picture size and position, kept on the SD card.",
 	};
-	static const int codes[6] = { 700, 800, 200, 900, 1000, 0 };
-	int sel = 0;
-	ui_overlay(UI_OVERLAY_TOOLS, "Card tools");
-	for (int i = 0; i < 6; i++) ui_overlay_row(i, rows[i], NULL);
-	ui_overlay_rows(6);
-	ui_overlay_select(sel);
-	writeStatusBar((char *)help[sel], "B: Back");
+	ui_action(NULL, 0);
+	ui_progress(-1);
+	writeStatusBar((char *)help[tools_sel], "A: Choose" DOT "B: Back");
+}
+
+/* Returns the job to do, or -1 for back to the main screen */
+static int CardTools(void)
+{
+	static const int codes[UI_TOOLS_COUNT] = { 700, 800, 200, 900, 1000, 0 };
+	in_tools = true;
+	UpdateMainCards();
+	ui_screen(UI_TOOLS);
+	ui_tools_select(tools_sel);
+	tools_status();
 	WaitRelease();
 	for (;;) {
 		read_pad();
 		u32 step = dpad_step();
-		if (step & PAD_BUTTON_UP) sel = (sel + 5) % 6;
-		else if (step & PAD_BUTTON_DOWN) sel = (sel + 1) % 6;
-		if (step & (PAD_BUTTON_UP | PAD_BUTTON_DOWN)) { ui_overlay_select(sel); writeStatusBar((char *)help[sel], "B: Back"); }
-		if (pad_down & PAD_BUTTON_B) { sel = -1; break; }
-		if (pad_down & PAD_BUTTON_A) break;
+		int sel = tools_sel;
+		if (step & PAD_BUTTON_UP) sel = (sel + UI_TOOLS_COUNT - 2) % UI_TOOLS_COUNT;
+		else if (step & PAD_BUTTON_DOWN) sel = (sel + 2) % UI_TOOLS_COUNT;
+		else if (step & (PAD_BUTTON_LEFT | PAD_BUTTON_RIGHT)) sel ^= 1;
+		if (sel != tools_sel) { tools_sel = sel; ui_tools_select(sel); tools_status(); }
+		if (pad_down & PAD_BUTTON_B) { in_tools = false; break; }
+		if (pad_down & PAD_BUTTON_A) {
+			if (codes[tools_sel]) { WaitRelease(); return codes[tools_sel]; }
+			SettingsMenu();     /* (a panel over this page) */
+			tools_status();
+		}
 	}
-	ui_overlay(UI_OVERLAY_NONE, "");
 	WaitRelease();
-	if (sel < 0) return -1;
-	if (codes[sel] == 0) { SettingsMenu(); return -1; }
-	return codes[sel];
+	return -1;
 }
 
 /****************************************************************************
@@ -460,6 +473,11 @@ int SelectMode ()
 	int last_probe = -99;
 
 	UpdateTitleInfo();
+	if (in_tools) {
+		/* back from one of the Card tools: to that page again */
+		int r = CardTools();
+		if (r > 0) return r;
+	}
 	ui_screen(UI_MAIN);
 	ui_main_select(main_tile);
 	main_status();
@@ -505,11 +523,9 @@ int SelectMode ()
 			if (main_tile == 0) ret = 300;
 			else if (main_tile == 1) ret = 400;
 			else {
-				ui_main_select(-1);
 				int r = CardTools();
-				ui_main_select(main_tile);
-				main_status();
 				if (r > 0) ret = r;
+				else { ui_screen(UI_MAIN); ui_main_select(main_tile); main_status(); }
 			}
 		}
 	}
@@ -524,8 +540,7 @@ int SelectMode ()
 int ChooseDevice(const u8 *devices, int count)
 {
 	int sel = 0;
-	ui_screen(UI_MAIN);
-	ui_main_select(-1);
+	if (!in_tools) { ui_screen(UI_MAIN); ui_main_select(-1); }   /* (from Card tools: over that page) */
 	UpdateMainCards();
 	ui_action(NULL, 0);
 	ui_overlay(UI_OVERLAY_DEVICES, "Choose the SD card");

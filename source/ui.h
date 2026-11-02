@@ -42,10 +42,10 @@ GXRModeObj *ui_video_mode(void);
 
 /* ------------------------------------------------------------------ scene */
 
-enum { UI_SPLASH, UI_MAIN, UI_LIST };
+enum { UI_SPLASH, UI_MAIN, UI_LIST, UI_TOOLS };
 /* what a row's chip says */
 enum { UI_ST_NONE, UI_ST_NEW, UI_ST_CHANGED, UI_ST_BACKED_UP, UI_ST_ON_CARD, UI_ST_NOT_ON_CARD };
-enum { UI_OVERLAY_NONE, UI_OVERLAY_DEVICES, UI_OVERLAY_SETTINGS, UI_OVERLAY_TOOLS };
+enum { UI_OVERLAY_NONE, UI_OVERLAY_DEVICES, UI_OVERLAY_SETTINGS };
 
 #define UI_LIST_ROWS 8
 #define UI_OVERLAY_ROWS 6
@@ -63,6 +63,12 @@ void ui_main_card2(const char *mc_name, const char *mc_info);   /* a second memo
 
 /* main screen: the three jobs (0 Back up, 1 Restore, 2 Card tools; -1 none chosen) */
 void ui_main_select(int tile);
+
+/* the Card tools page: six tiles, two across (0 back up the whole card,
+ * 1 restore a whole card, 2 delete saves, 3 format, 4 choose the SD card,
+ * 5 settings) */
+#define UI_TOOLS_COUNT 6
+void ui_tools_select(int tile);
 
 /* list screen: the saves (or folders, or card images) to choose from */
 void ui_list_header(const char *title, const char *right);
