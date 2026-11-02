@@ -264,8 +264,7 @@ static sys_resetinfo card_resetinfo = {
 	127
 };
 
-extern unsigned long gettick(void);
-extern long long gettime(void);
+#include <ogc/timesupp.h>   /* gettick() and gettime() (gettick is inline in libogc2) */
 extern syssram* __SYS_LockSram(void);
 extern syssramex* __SYS_LockSramEx(void);
 extern u32 __SYS_UnlockSram(u32 write);
