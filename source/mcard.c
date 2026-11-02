@@ -115,22 +115,25 @@ int MountCard(int cslot)
 	int tries = 0;
 	int isMounted;
 
+	/*** Start the memory card system afresh. libogc2 then waits about 300 ms
+	before it trusts a slot again (any sooner and the card counts as missing:
+	"no card"), so the reset happens once, and the card gets time to answer
+	before it's mounted. ***/
+	EXI_ProbeReset();
+	CARD_Init (NULL, NULL);
+	//Ensure we start in show all files mode
+	CARD_SetCompany(NULL);
+	CARD_SetGamecode(NULL);
+	for (int i = 0; i < 90 && CARD_ProbeEx(cslot, NULL, NULL) == CARD_ERROR_BUSY; i++)
+		VIDEO_WaitVSync ();	/* up to 1.5 seconds */
+
 	// Mount the card, try several times as they are tricky
 	while ( (tries < 10) && (ret < 0))
 	{
-		/*** We already initialized the Memory Card subsystem with CARD_Init() in select_memcard_slot(). Let's reset the
-		EXI subsystem, just to make sure we have no problems mounting the card ***/
-		EXI_ProbeReset();
-		CARD_Init (NULL, NULL);
-		//Ensure we start in show all files mode
-		CARD_SetCompany(NULL);
-		CARD_SetGamecode(NULL);		
-
-		/*** Mount the card ***/
 		ret = CARD_Mount (cslot, SysArea, card_removed);
 		if (ret >= 0) break;
 
-		VIDEO_WaitVSync ();
+		for (int i = 0; i < 6; i++) VIDEO_WaitVSync ();	/* a tenth of a second between tries */
 		tries++;
 	}
 			/*** Make sure the card is really mounted ***/
