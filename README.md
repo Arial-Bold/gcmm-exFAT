@@ -18,8 +18,7 @@ It runs on the GameCube only.
 
 ## What it does
 
-<img width="1280" height="960" alt="gcmm-exfat-02-main" src="https://github.com/user-attachments/assets/f1a6b81a-837a-4840-ae58-24a3c49fed3b" /><img width="1280" height="960" alt="gcmm-exfat-03-back-up" src="https://github.com/user-attachments/assets/58345ec1-35c0-4c17-b827-566bb23f3176" />
-
+<img width="1280" height="960" alt="gcmm-exfat-02-main" src="https://github.com/user-attachments/assets/f1a6b81a-837a-4840-ae58-24a3c49fed3b" />
 
 The main screen has three big choices:
 
@@ -28,7 +27,7 @@ The main screen has three big choices:
 - **Card tools**: a page of its own to back up a whole memory card as a .raw image, restore a whole card (.raw, .gcp and .mci), delete saves, format the card, choose the SD card, and open Settings.
 
 
-![Uploading gcmm-exfat-03-back-up.png…]()
+<img width="1280" height="960" alt="gcmm-exfat-03-back-up" src="https://github.com/user-attachments/assets/4dafb2d3-d284-4cfe-a4f0-f2dd5c66d9cc" />
 
 Every save shows its own icon and comment. The bar along the bottom says how many saves you've ticked and where they'll go, and under it are the buttons you can press.
 
