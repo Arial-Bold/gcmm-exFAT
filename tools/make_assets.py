@@ -110,6 +110,27 @@ def card(w, h, body_top, body_bot, contacts=GOLD):
         dd.rectangle([x, h * 0.74, x + w * 0.68 / n * 0.6, h * 0.92], fill=contacts + (255,))
     return body
 
+def memory_card(w, h, top, bot):
+    """a GameCube-style memory card, kept simple so it reads at any size:
+    nearly square with rounded corners, the little triangle at the top, a
+    big plain label and one bar along the bottom. Drawn big and scaled down;
+    it sits in a w x h picture (centred, as wide as it is) so it lines up
+    with the SD card picture."""
+    S = 4
+    W = w * S; H = round(W * 1.06)
+    body = vgrad(W, H, top, bot)
+    m = Image.new('L', (W, H), 0); ImageDraw.Draw(m).rounded_rectangle([0, 0, W - 1, H - 1], radius=W // 10, fill=255)
+    body.putalpha(m)
+    d = ImageDraw.Draw(body)
+    ridge = round(H * 0.12); tw = W * 0.06
+    d.polygon([(W / 2 - tw, ridge * 0.72), (W / 2 + tw, ridge * 0.72), (W / 2, ridge * 0.3)], fill=(255, 255, 255, 190))
+    d.rounded_rectangle([W * 0.1, H * 0.18, W * 0.9, H * 0.68], radius=W // 20, fill=(240, 243, 252, 245))
+    d.rounded_rectangle([W * 0.16, H * 0.79, W * 0.84, H * 0.88], radius=S * 4, fill=(255, 255, 255, 60))
+    small = body.resize((w, round(H / S)), Image.LANCZOS)
+    out = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    out.alpha_composite(small, (0, (h - small.height) // 2))
+    return out
+
 def text_img(s, font, size, sp=0):
     f = ImageFont.truetype(font, size)
     tmp = ImageDraw.Draw(Image.new('L', (1, 1)))
@@ -225,7 +246,7 @@ def main():
         h.append(f'extern const UiFont font_{name};   /* {px} px */')
     pics = [('logo_title', pad_to(sized(logo(False), h=44), 4, 4)),
             ('logo_splash', pad_to(sized(logo(True), h=216), 4, 4)),
-            ('card_mc', pad_to(card(64, 84, (88, 74, 210), INDIGO_D), 4, 4)),
+            ('card_mc', pad_to(memory_card(64, 84, (122, 108, 240), (52, 42, 160)), 4, 4)),
             ('card_sd', pad_to(card(64, 84, (235, 238, 245), (170, 180, 195)), 4, 4)),
             ('card_file', pad_to(card(16, 20, (210, 214, 222), (150, 160, 175)), 4, 4))]
     h.append('')
