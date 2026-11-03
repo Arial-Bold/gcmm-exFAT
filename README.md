@@ -11,7 +11,7 @@ GCMM exFAT backs up, restores and deletes the saves on your GameCube memory card
 - **Virtual memory cards**: the card images your Launcher keeps on the SD card work just like real cards: back up, restore, delete, format, and copy saves between real and virtual cards
 - both memory cards shown at the top when there's one in each slot
 - the controls along the bottom of every screen, and menu sounds
-- a new logo and splash screen
+- a new logo, and an opening: the logo flips over and goes into a slot (with its own sound), which you can turn off
 
 It runs on the GameCube only.
 
@@ -53,7 +53,8 @@ Press START on the main screen, or choose Settings in Card tools.
 - **Screen**: 4:3, or 16:9 if your TV stretches the picture to fill a widescreen.
 - **Picture width**: Full uses the whole width of the TV picture; Standard leaves a border.
 - **Overscan**: pulls everything in from the edges if your TV cuts them off.
-- **Menu sounds**: how loud the sounds are when you move and choose, from Off to 10 (4 to start with).
+- **Menu sounds**: how loud the sounds are when you move and choose, from Off to 10 (4 to start with). The opening's sound plays at this level too.
+- **Opening**: On plays the logo animation when GCMM exFAT starts (A or START skips it); Off goes straight to the logo and the main screen.
 - **Launcher**: which .dol at the root of the SD card Exit to Launcher starts. Left and Right go through the ones on the card. Until you choose, it's `autoexec.dol`, `boot.dol`, `ipl.dol` or a `swiss*.dol`, whichever is there.
 - **Update from GitHub**: see below.
 - **Exit to Launcher**: leaves GCMM exFAT.
@@ -104,7 +105,7 @@ docker run --rm -v "$PWD:/src" -w /src ghcr.io/extremscorner/libogc2:latest make
 
 Every push to GitHub builds it too (see the Actions tab), and the result is a zip with the `gcmm` folder ready for the SD card.
 
-The font textures, logo and card pictures are made by `tools/make_assets.py` (needs Python 3 with Pillow and NumPy), which writes `source/ui_assets.c` and `.h`. `tools/make_banner.py` makes `dist/opening.bnr`, the banner and name your Launcher shows. `tools/make_webpage.py` turns `source/net/webpage.html` (the Network transfer page) into `source/net/webpage.h`.
+The font textures, logo and card pictures are made by `tools/make_assets.py` (needs Python 3 with Pillow and NumPy), which writes `source/ui_assets.c` and `.h`. `tools/make_banner.py` makes `dist/opening.bnr`, the banner and name your Launcher shows. `tools/sound/make_intro_clip.py` makes `source/intro_clip.h`, the opening's sound (from `tools/sound/gcmm_haze.py`; needs NumPy and SciPy). `tools/make_webpage.py` turns `source/net/webpage.html` (the Network transfer page) into `source/net/webpage.h`.
 
 ## Credits
 
