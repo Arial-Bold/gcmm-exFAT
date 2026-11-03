@@ -174,7 +174,7 @@ def spaced_to(s, font, target, track, top, bot):
     im = text_img(s, font, int(size), int(size) * track)
     return tinted(im.resize((target, max(1, round(im.height * target / im.width))), Image.LANCZOS), top, bot)
 
-def logo(tagline=True):
+def logo(tagline=True, shadow=True):
     """the card is the logo: a wide indigo memory card with GCMM on its label,
     gold contacts and exFAT along the bottom edge, MEMORY MANAGER under it
     (the splash screen's). The header's has fewer contacts and a bigger exFAT."""
@@ -200,7 +200,7 @@ def logo(tagline=True):
         x = 60 + i * 52
         dd.rounded_rectangle([x, cy0, x + 32, cy1], radius=5, fill=(255, 226, 120, 255))
     dd.text((CW - 64, (cy0 + cy1) / 2), 'exFAT', font=ImageFont.truetype(FONT_X, int((cy1 - cy0) * 1.05)), fill=(255, 226, 120, 255), anchor='rm')
-    out = shadowed(body, 10 if tagline else 6, (0, 8 if tagline else 4), 150)
+    out = shadowed(body, 10 if tagline else 6, (0, 8 if tagline else 4), 150) if shadow else body
     if not tagline:
         return out.crop(out.getbbox())
     mm = spaced_to('MEMORY MANAGER', FONT, CW - 40, 0.3, (200, 210, 230), (150, 160, 185))
@@ -208,6 +208,29 @@ def logo(tagline=True):
     c.alpha_composite(out, (0, 0))
     c.alpha_composite(mm, (out.width // 2 - mm.width // 2, out.height + 14))
     return c.crop(c.getbbox())
+
+def cheese_card(w, h):
+    """the easter egg's virtual card: the simple memory card, made of Swiss
+    cheese (holes in it, a rind-coloured label edge). Drawn big, scaled down,
+    centred in a w x h picture like memory_card()."""
+    S = 4
+    W = w * S; H = round(W * 1.06)
+    body = vgrad(W, H, (255, 220, 110), (232, 170, 50))
+    m = Image.new('L', (W, H), 0); ImageDraw.Draw(m).rounded_rectangle([0, 0, W - 1, H - 1], radius=W // 10, fill=255)
+    body.putalpha(m)
+    d = ImageDraw.Draw(body)
+    for (x, y, r) in [(0.22, 0.30, 0.10), (0.62, 0.22, 0.07), (0.78, 0.55, 0.11), (0.35, 0.62, 0.13), (0.15, 0.85, 0.06),
+                      (0.58, 0.83, 0.08), (0.88, 0.88, 0.05), (0.48, 0.42, 0.05)]:
+        rr = r * W; cx, cy = x * W, y * H
+        d.ellipse([cx - rr, cy - rr + rr * 0.18, cx + rr, cy + rr + rr * 0.18], fill=(170, 105, 15, 255))
+        d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=(196, 128, 24, 255))
+    d.rounded_rectangle([W * 0.1, H * 0.18, W * 0.9, H * 0.66], radius=W // 20, outline=(255, 245, 200, 200), width=S * 2)
+    ridge = round(H * 0.12); tw = W * 0.06
+    d.polygon([(W / 2 - tw, ridge * 0.72), (W / 2 + tw, ridge * 0.72), (W / 2, ridge * 0.3)], fill=(255, 255, 255, 170))
+    small = body.resize((w, round(H / S)), Image.LANCZOS)
+    out = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    out.alpha_composite(small, (0, (h - small.height) // 2))
+    return out
 
 def sized(img, w=None, h=None):
     if w is None: w = round(img.width * h / img.height)
@@ -248,7 +271,12 @@ def main():
             ('logo_splash', pad_to(sized(logo(True), h=216), 4, 4)),
             ('card_mc', pad_to(memory_card(64, 84, (122, 108, 240), (52, 42, 160)), 4, 4)),
             ('card_sd', pad_to(card(64, 84, (235, 238, 245), (170, 180, 195)), 4, 4)),
-            ('card_file', pad_to(card(16, 20, (210, 214, 222), (150, 160, 175)), 4, 4))]
+            ('card_file', pad_to(card(16, 20, (210, 214, 222), (150, 160, 175)), 4, 4)),
+            ('card_cheese', pad_to(cheese_card(64, 84), 4, 4)),
+            # the opening: the logo card on its own (it flips; its back is drawn
+            # from its shape) and MEMORY MANAGER (it folds into the slot)
+            ('intro_card', pad_to(sized(logo(False, shadow=False), w=328), 4, 4)),
+            ('intro_words', pad_to(spaced_to('MEMORY MANAGER', FONT, 300, 0.3, (215, 222, 240), (170, 180, 205)), 4, 4))]
     h.append('')
     for name, img in pics:
         c.append(c_array(f'{name}_tex', tile_rgba8(img)))
