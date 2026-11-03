@@ -16,6 +16,8 @@ It runs on the GameCube only.
 
 ## What it does
 
+<img width="1280" height="960" alt="gcmm-exfat-02-main" src="https://github.com/user-attachments/assets/b36805b0-0db9-4b09-94b5-01f13dbeb4a4" />
+
 The main screen has three big choices:
 
 - **Back up**: the saves on the memory card, each marked **New** (no backup yet), **Changed** (newer than its backup) or **Backed up**. The new and changed ones start out ticked; X backs up the ticked saves.
@@ -46,6 +48,9 @@ The buttons that do something on each screen are shown along the bottom.
 
 ## Settings
 
+<img width="1280" height="960" alt="gcmm-exfat-11-settings" src="https://github.com/user-attachments/assets/32130869-ab0f-4e76-aef8-2d2b382cd8f4" />
+
+
 Press START on the main screen, or choose Settings in Card tools.
 
 - **Resolution**: Auto (480p with a component cable), 480i or 480p. A new resolution goes back to the old one after 10 seconds unless you press A, in case your TV can't show it.
@@ -61,6 +66,9 @@ They're kept in `MCBACKUP/gcmm.ini` on the SD card, and read before the splash s
 
 ## Network transfer
 
+<img width="1280" height="960" alt="gcmm-exfat-09-network-transfer" src="https://github.com/user-attachments/assets/3bc3cd13-53bf-4946-959c-d80082776606" />
+
+
 In Card tools, with a Broadband Adapter or a WIZnet-based adapter (such as the ETH2GC) connected to your router. Scan the QR code with your phone, or type the address it shows into a browser on a computer on the same network.
 
 - **Sending files:** choose files on the page (or drag them onto it on a computer). Each one arrives whole, then the GameCube asks where it goes: A opens a folder or chooses "Put it here", B goes up a folder. A zip is unzipped into the folder you choose (Z keeps it as a zip instead). If a file with the same name is there already, you can replace it or keep both.
@@ -69,6 +77,9 @@ In Card tools, with a Broadband Adapter or a WIZnet-based adapter (such as the E
 It only works while the Network transfer page is open. Files wait in a `gcmm-incoming` folder until you choose where they go.
 
 ## Update from GitHub
+
+<img width="1280" height="960" alt="gcmm-exfat-12-update" src="https://github.com/user-attachments/assets/ecc91a66-7389-4661-8187-1c0d626ad551" />
+
 
 With a Broadband Adapter or a WIZnet-based adapter (such as the ETH2GC) connected to your router, Settings > Update from GitHub checks this repository's latest release. If it's newer, you see what's new in it, and A downloads and installs it: the new `default.dol` replaces the one GCMM exFAT was started from (with its banner and `cacert.pem`), and it starts straight away. Your settings and backups are left alone. If anything goes wrong, nothing is changed.
 
