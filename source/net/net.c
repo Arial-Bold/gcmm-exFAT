@@ -13,6 +13,7 @@ static thr_t thread;
 
 NetState net_state(void) { return state; }
 const char *net_gateway(void) { return gw; }
+const char *net_ip(void) { return ip; }
 const char *net_message(void) { return msg; }
 
 static void *net_main(void *arg) {
@@ -25,6 +26,8 @@ static void *net_main(void *arg) {
 		state = NET_FAILED;
 		return NULL;
 	}
+#else
+	snprintf(ip, sizeof(ip), "192.168.1.42");   /* (PC tests) */
 #endif
 	state = NET_UP;
 	return NULL;

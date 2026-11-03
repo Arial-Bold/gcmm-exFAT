@@ -24,6 +24,11 @@
 #include "ui.h"
 #include "saves.h"
 #include "net/update.h"
+#include "net/xfer.h"
+#include "net/unzip.h"
+#include "net/qrcodegen.h"
+#include "net/thr.h"
+#include <dirent.h>
 #include "sound.h"
 #include <stdarg.h>
 #include <strings.h>
@@ -609,6 +614,313 @@ static void UpdatePage(void)
 	WaitRelease();
 }
 
+/* ------------------------------------------------------- network transfer */
+
+/* The holding folder's leftovers from an earlier time (files that never got a home) */
+static void clear_holding(void)
+{
+	char dir[64];
+	xfer_holding_dir(dir, sizeof(dir));
+	DIR *d = opendir(dir);
+	if (!d) return;
+	struct dirent *e;
+	char names[32][128];
+	int n = 0;
+	while ((e = readdir(d)) && n < 32)
+		if (e->d_name[0] != '.') snprintf(names[n++], sizeof(names[0]), "%s", e->d_name);
+	closedir(d);
+	for (int i = 0; i < n; i++) {
+		char p[200];
+		snprintf(p, sizeof(p), "%s/%s", dir, names[i]);
+		remove(p);
+	}
+}
+
+static bool is_zip(const char *name)
+{
+	size_t l = strlen(name);
+	return l > 4 && !strcasecmp(name + l - 4, ".zip");
+}
+
+static void size_text(uint32_t n, char *out, int cap)
+{
+	if (n >= 1048576) snprintf(out, cap, "%.1f MB", n / 1048576.0);
+	else snprintf(out, cap, "%u KB", n / 1024 ? n / 1024 : 1);
+}
+
+/* the files on the page: the newest at the top */
+static void transfer_rows(void)
+{
+	XferItem it[UI_TRANSFER_ROWS];
+	int n = xfer_items(it, UI_TRANSFER_ROWS);
+	for (int i = 0; i < UI_TRANSFER_ROWS; i++) {
+		if (i >= n) { ui_transfer_row(i, "", "", -1); continue; }
+		char d[96], a[24], b[24];
+		size_text(it[i].got, a, sizeof(a));
+		size_text(it[i].total, b, sizeof(b));
+		switch (it[i].state) {
+		case XF_SENDING:
+			snprintf(d, sizeof(d), "Receiving" DOT "%s of %s", a, b);
+			ui_transfer_row(i, it[i].name, d, it[i].total ? (float)it[i].got / it[i].total : 0);
+			break;
+		case XF_WAITING: case XF_WORKING:
+			snprintf(d, sizeof(d), "Received" DOT "%s", b);
+			ui_transfer_row(i, it[i].name, d, -1);
+			break;
+		default:
+			ui_transfer_row(i, it[i].name, it[i].text, -1);
+			break;
+		}
+	}
+}
+
+/* the QR code and address, once the network is up */
+static void transfer_page(void)
+{
+	static char qr_for[48];
+	static unsigned char modules[177 * 177];
+	static int size;
+	const char *u = xfer_url();
+	if (u[0] && strcmp(u, qr_for)) {
+		static uint8_t qr[qrcodegen_BUFFER_LEN_MAX], tmp[qrcodegen_BUFFER_LEN_MAX];
+		size = 0;
+		if (qrcodegen_encodeText(u, tmp, qr, qrcodegen_Ecc_MEDIUM, qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX, qrcodegen_Mask_AUTO, true)) {
+			size = qrcodegen_getSize(qr);
+			for (int y = 0; y < size; y++)
+				for (int x = 0; x < size; x++) modules[y * size + x] = qrcodegen_getModule(qr, x, y);
+		}
+		snprintf(qr_for, sizeof(qr_for), "%s", u);
+	}
+	ui_transfer_page(modules, u[0] ? size : 0, u, xfer_message());
+}
+
+/* --- where a file goes: the folders on the SD card */
+
+#define PICK_FOLDERS 128
+static char folders[PICK_FOLDERS][96];
+static int nfolders;
+
+static int cmp_folder(const void *a, const void *b) { return strcasecmp((const char *)a, (const char *)b); }
+
+static void read_folders(const char *dir)
+{
+	nfolders = 0;
+	DIR *d = opendir(dir);
+	if (!d) return;
+	struct dirent *e;
+	while ((e = readdir(d)) && nfolders < PICK_FOLDERS) {
+		if (e->d_name[0] == '.' || !strcasecmp(e->d_name, "gcmm-incoming") || strlen(e->d_name) >= sizeof(folders[0])) continue;
+		char p[400];
+		snprintf(p, sizeof(p), "%s%s%s", dir, dir[strlen(dir) - 1] == '/' ? "" : "/", e->d_name);
+		if (isdir_sd(p) == 1) snprintf(folders[nfolders++], sizeof(folders[0]), "%s", e->d_name);
+	}
+	closedir(d);
+	qsort(folders, nfolders, sizeof(folders[0]), cmp_folder);
+}
+
+/* "SD card / apps / cubeverse" for "apps/cubeverse" */
+static void place_name(const char *rel, char *out, int cap)
+{
+	snprintf(out, cap, "SD card");
+	char tmp[300];
+	snprintf(tmp, sizeof(tmp), "%s", rel);
+	for (char *p = strtok(tmp, "/"); p; p = strtok(NULL, "/")) {
+		size_t l = strlen(out);
+		snprintf(out + l, cap - l, " / %s", p);
+	}
+}
+
+static volatile int unzip_cancel;
+static UnzipProgress unzip_prog;
+static volatile bool unzip_busy, unzip_ok;
+static char unzip_from[300], unzip_to[340], unzip_err[160];
+static void *unzip_main(void *arg)
+{
+	(void)arg;
+	unzip_ok = unzip_file(unzip_from, unzip_to, &unzip_prog, &unzip_cancel, unzip_err, sizeof(unzip_err));
+	unzip_busy = false;
+	return NULL;
+}
+
+/* Puts the file in rel (a folder, "" for the top), unzipping a zip if asked */
+static void place_file(const XferItem *it, const char *rel, bool unzip)
+{
+	char dir[340], where[300], msg[160];
+	snprintf(dir, sizeof(dir), "%s:/%s", fatpath, rel);
+	snprintf(where, sizeof(where), "%s", rel[0] ? rel : "the top of the SD card");
+	if (unzip) {
+		snprintf(unzip_from, sizeof(unzip_from), "%s", it->held);
+		snprintf(unzip_to, sizeof(unzip_to), "%s", dir);
+		memset(&unzip_prog, 0, sizeof(unzip_prog));
+		unzip_cancel = 0;
+		unzip_busy = true;
+		thr_t th;
+		if (!thr_create(&th, unzip_main, NULL, 64 * 1024, 60)) unzip_main(NULL);
+		else thr_detach(th);
+		snprintf(msg, sizeof(msg), "Unzipping %s\x85", it->name);
+		Hints(1, "Please wait");
+		while (unzip_busy) {
+			VIDEO_WaitVSync();
+			ui_status(msg, unzip_prog.current);
+			ui_progress(unzip_prog.total ? (float)unzip_prog.done / unzip_prog.total : 0);
+		}
+		ui_progress(-1);
+		remove(it->held);
+		if (unzip_ok) {
+			snprintf(msg, sizeof(msg), "Unzipped %d file%s into %s", unzip_prog.files_done, unzip_prog.files_done == 1 ? "" : "s", where);
+			xfer_finish(it->id, true, msg);
+		} else {
+			snprintf(msg, sizeof(msg), "Couldn't unzip it: %s", unzip_err);
+			xfer_finish(it->id, false, msg);
+			WaitPrompt(msg);
+		}
+		UpdateSDInfo();
+		return;
+	}
+	/* a file: moved from the holding folder (the same SD card, so it's quick) */
+	char dest[440];
+	snprintf(dest, sizeof(dest), "%s%s%s", dir, rel[0] ? "/" : "", it->name);
+	if (!access(dest, F_OK)) {
+		char q[160];
+		snprintf(q, sizeof(q), "%s is already there. Replace it?", it->name);
+		if (WaitPromptChoice(q, "Keep both", "Replace") == 1) remove(dest);
+		else {
+			/* name_2.ext, name_3.ext ... */
+			char base[96], ext[16] = "";
+			snprintf(base, sizeof(base), "%s", it->name);
+			char *dot = strrchr(base, '.');
+			if (dot && dot != base) { snprintf(ext, sizeof(ext), "%s", dot); *dot = 0; }
+			for (int k = 2; k < 1000 && !access(dest, F_OK); k++)
+				snprintf(dest, sizeof(dest), "%s%s%s_%d%s", dir, rel[0] ? "/" : "", base, k, ext);
+		}
+	}
+	if (rename(it->held, dest) == 0) {
+		snprintf(msg, sizeof(msg), "Saved in %s", where);
+		xfer_finish(it->id, true, msg);
+	} else {
+		remove(it->held);
+		xfer_finish(it->id, false, "Couldn't save it on the SD card (is it full?).");
+		WaitPrompt("Couldn't save it on the SD card (is it full?).");
+	}
+	UpdateSDInfo();
+}
+
+/* Asks where the file goes: A opens a folder or chooses "Put it here",
+ * B goes up a folder, Z (for a zip) chooses whether to unzip it */
+static void ask_where(const XferItem *it)
+{
+	char rel[300] = "", dir[340], title[96], place[200], put[80], l1[200];
+	bool zip = is_zip(it->name), unzip = zip;
+	int sel = 0, top = 0;
+	snprintf(title, sizeof(title), "Where should %s go?", it->name);
+	ui_hints_push();
+	for (bool reload = true;;) {
+		if (reload) {
+			snprintf(dir, sizeof(dir), "%s:/%s", fatpath, rel);
+			read_folders(dir);
+			sel = 0; top = 0;
+			reload = false;
+		}
+		/* the rows: "Put it here", then up to 7 folders (scrolling) */
+		int shown = nfolders - top < UI_OVERLAY_ROWS - 1 ? nfolders - top : UI_OVERLAY_ROWS - 1;
+		ui_overlay(UI_OVERLAY_DEVICES, title);
+		place_name(rel, place, sizeof(place));
+		snprintf(put, sizeof(put), "Put it here (%s)", rel[0] ? (strrchr(rel, '/') ? strrchr(rel, '/') + 1 : rel) : "the top");
+		ui_overlay_row(0, put, NULL);
+		for (int i = 0; i < shown; i++) ui_overlay_row(i + 1, folders[top + i], NULL);
+		ui_overlay_rows(1 + shown);
+		ui_overlay_select(sel == 0 ? 0 : sel - top);
+		snprintf(l1, sizeof(l1), "%s", place);
+		ui_status(l1, zip ? (unzip ? "It's a zip: it'll be unzipped into the folder you choose." : "It'll be kept as a zip.") : "");
+		if (zip) Hints(4, "S:Move", "A:Open or choose", rel[0] ? "B:Up a folder" : "B:Don't keep it", unzip ? "Z:Keep as a zip" : "Z:Unzip it");
+		else Hints(3, "S:Move", "A:Open or choose", rel[0] ? "B:Up a folder" : "B:Don't keep it");
+
+		/* wait for a button */
+		for (;;) {
+			read_pad();
+			u32 step = dpad_step();
+			int total = 1 + nfolders;
+			int ns = sel;
+			if (step & PAD_BUTTON_UP) ns = (sel + total - 1) % total;
+			else if (step & PAD_BUTTON_DOWN) ns = (sel + 1) % total;
+			if (ns != sel) {
+				sel = ns;
+				if (sel > 0 && sel - 1 < top) top = sel - 1;
+				if (sel > 0 && sel - 1 >= top + UI_OVERLAY_ROWS - 1) top = sel - 1 - (UI_OVERLAY_ROWS - 2);
+				if (sel == 0) top = 0;
+				break;
+			}
+			if (zip && (pad_down & PAD_TRIGGER_Z)) { unzip = !unzip; break; }
+			if (pad_down & PAD_BUTTON_A) {
+				WaitRelease();
+				if (sel == 0) {
+					ui_overlay(UI_OVERLAY_NONE, "");
+					place_file(it, rel, unzip);
+					ui_hints_pop();
+					return;
+				}
+				size_t l = strlen(rel);
+				snprintf(rel + l, sizeof(rel) - l, "%s%s", l ? "/" : "", folders[sel - 1]);
+				reload = true;
+				break;
+			}
+			if (pad_down & PAD_BUTTON_B) {
+				WaitRelease();
+				if (rel[0]) {
+					char *slash = strrchr(rel, '/');
+					if (slash) *slash = 0; else rel[0] = 0;
+					reload = true;
+					break;
+				}
+				char q[160];
+				snprintf(q, sizeof(q), "Don't keep %s? It'll be deleted from the GameCube.", it->name);
+				if (WaitPromptChoice(q, "Choose a folder", "Delete it") == 1) {
+					ui_overlay(UI_OVERLAY_NONE, "");
+					remove(it->held);
+					xfer_finish(it->id, false, "Not kept: deleted on the GameCube");
+					ui_hints_pop();
+					return;
+				}
+				break;
+			}
+		}
+	}
+}
+
+/* The Network transfer page */
+static void NetworkTransfer(void)
+{
+	static bool cleared;
+	if (!have_sd) { WaitPrompt("Network transfer needs an SD card to put files on."); return; }
+	if (!cleared) { clear_holding(); cleared = true; }
+	xfer_open();
+	ui_screen(UI_TRANSFER);
+	transfer_page();
+	transfer_rows();
+	ui_progress(-1);
+	writeStatusBar("Network transfer", "Phones and computers on your home network can send files to the SD card, and download your backups.");
+	Hints(1, "B:Back");
+	WaitRelease();
+	int frame = 0;
+	for (;;) {
+		read_pad();
+		if (++frame % 10 == 0) { transfer_page(); transfer_rows(); }
+		XferItem it;
+		if (xfer_take_waiting(&it)) {
+			sound_play(SFX_CONFIRM);
+			transfer_rows();
+			ask_where(&it);
+			transfer_page();
+			transfer_rows();
+			writeStatusBar("Network transfer", "Phones and computers on your home network can send files to the SD card, and download your backups.");
+			Hints(1, "B:Back");
+		}
+		if (pad_down & PAD_BUTTON_B) break;
+	}
+	xfer_close();
+	WaitRelease();
+}
+
 /* ------------------------------------------------------------ main screen */
 
 static int main_tile = 0;
@@ -652,7 +964,7 @@ static void tools_status(void)
 		{ "Restore a whole card", "Puts a whole-card copy from the SD card back on the memory card." },
 		{ "Delete saves", "Choose saves to delete from the memory card." },
 		{ "Format the card", "Erases everything on the memory card." },
-		{ "Choose the SD card", "Use another SD card adapter." },
+		{ "Network transfer", "Send files from a phone or computer to the SD card, and download your backups." },
 		{ "Settings", "Picture size and position, updates, Exit to Launcher." },
 	};
 	ui_progress(-1);
@@ -663,7 +975,7 @@ static void tools_status(void)
 /* Returns the job to do, or -1 for back to the main screen */
 static int CardTools(void)
 {
-	static const int codes[UI_TOOLS_COUNT] = { 700, 800, 200, 900, 1000, 0 };
+	static const int codes[UI_TOOLS_COUNT] = { 700, 800, 200, 900, 0, 0 };   /* (Network transfer and Settings happen here) */
 	in_tools = true;
 	UpdateMainCards();
 	ui_screen(UI_TOOLS);
@@ -681,7 +993,9 @@ static int CardTools(void)
 		if (pad_down & PAD_BUTTON_B) { in_tools = false; break; }
 		if (pad_down & PAD_BUTTON_A) {
 			if (codes[tools_sel]) { WaitRelease(); return codes[tools_sel]; }
-			if (SettingsMenu() == 500) return 500;
+			if (tools_sel == 4) NetworkTransfer();
+			else if (SettingsMenu() == 500) return 500;
+			ui_screen(UI_TOOLS);
 			tools_status();
 		}
 	}
@@ -694,6 +1008,8 @@ static int CardTools(void)
 * 200 delete, 300 back up, 400 restore, 500 exit, 700 whole-card back up,
 * 800 whole-card restore, 900 format, 1000 choose device
 ****************************************************************************/
+static u64 exit_armed_until;
+
 int SelectMode ()
 {
 	int ret = 0, poll = 0;
@@ -733,7 +1049,13 @@ int SelectMode ()
 			main_status();
 			continue;
 		}
-		if (pad_down & PAD_BUTTON_B) { ret = 500; break; }
+		if (pad_down & PAD_BUTTON_B) {
+			/* B twice to leave: the first press asks */
+			u64 now = ticks_to_millisecs(gettime());
+			if (now < exit_armed_until) { ret = 500; break; }
+			exit_armed_until = now + 3000;
+			ui_toast("Press B again to exit to Launcher");
+		}
 
 		u32 step = dpad_step();
 		if (step & (PAD_BUTTON_LEFT | PAD_BUTTON_RIGHT)) {

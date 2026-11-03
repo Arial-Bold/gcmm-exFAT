@@ -105,6 +105,12 @@ static struct {
 	/* main */
 	int main_sel, tools_sel;
 	char upd_now[24], upd_new[24], upd_notes[1200];
+	char toast[96];
+	u32 toast_at;
+	unsigned char qr[177 * 177];
+	int qr_size;
+	char tr_addr[48], tr_state[96];
+	struct { char name[48], detail[64]; float progress; } tr_rows[UI_TRANSFER_ROWS];
 	/* list */
 	char list_title[TXT], list_right[48];
 	bool checkable;
@@ -153,6 +159,20 @@ void ui_main_card2(const char *mn, const char *mi) {
 }
 void ui_update_page(const char *a, const char *b, const char *n) {
 	L(); cpy(sc.upd_now, a, sizeof(sc.upd_now)); cpy(sc.upd_new, b, sizeof(sc.upd_new)); cpy(sc.upd_notes, n, sizeof(sc.upd_notes)); U();
+}
+void ui_toast(const char *m) { L(); cpy(sc.toast, m, sizeof(sc.toast)); sc.toast_at = now_ms(); U(); }
+void ui_transfer_page(const unsigned char *qr, int size, const char *addr, const char *state) {
+	L();
+	if (size > 177) size = 0;
+	sc.qr_size = size;
+	if (size) memcpy(sc.qr, qr, size * size);
+	cpy(sc.tr_addr, addr, sizeof(sc.tr_addr));
+	cpy(sc.tr_state, state, sizeof(sc.tr_state));
+	U();
+}
+void ui_transfer_row(int r, const char *n, const char *d, float p) {
+	if (r < 0 || r >= UI_TRANSFER_ROWS) return;
+	L(); cpy(sc.tr_rows[r].name, n, sizeof(sc.tr_rows[r].name)); cpy(sc.tr_rows[r].detail, d, sizeof(sc.tr_rows[r].detail)); sc.tr_rows[r].progress = p; U();
 }
 void ui_tools_select(int r) { L(); sc.tools_sel = r; U(); }
 void ui_main_select(int r) { L(); sc.main_sel = r; U(); }
@@ -672,13 +692,26 @@ static void card_pair(float cx, float cy, bool to_sd) {
 	tri(cx + 12, cy - 1, cx + 2, cy - 9, cx + 2, cy + 7, GOLD);
 	rect(cx - 12, cy - 4, 15, 6, GOLD);
 }
-static void gear(float cx, float cy, float r, Color c, Color hole) {
+/* a gear: eight tapered teeth pointing out from the middle, a thin dark
+ * edge so it reads against any panel, and a hole in the middle */
+static void gear_shape(float cx, float cy, float r, Color c) {
 	for (int i = 0; i < 8; i++) {
-		float a = i * 3.14159265f / 4, x = cx + cosf(a) * r, y = cy + sinf(a) * r;
-		rrect_v(x - r * 0.28f, y - r * 0.28f, r * 0.56f, r * 0.56f, 2, c, c);
+		float a = i * 3.14159265f / 4 + 3.14159265f / 8;
+		float ri = r * 0.70f, ro = r, wi = 0.30f, wo = 0.19f;
+		float x0 = cx + cosf(a - wi) * ri, y0 = cy + sinf(a - wi) * ri;
+		float x1 = cx + cosf(a + wi) * ri, y1 = cy + sinf(a + wi) * ri;
+		float x2 = cx + cosf(a + wo) * ro, y2 = cy + sinf(a + wo) * ro;
+		float x3 = cx + cosf(a - wo) * ro, y3 = cy + sinf(a - wo) * ro;
+		tri(x0, y0, x1, y1, x2, y2, c);
+		tri(x0, y0, x2, y2, x3, y3, c);
 	}
-	circle(cx, cy, r * 0.92f, c);
-	circle(cx, cy, r * 0.38f, hole);
+	circle(cx, cy, r * 0.76f, c);
+}
+static void gear(float cx, float cy, float r, Color c, Color hole) {
+	gear_shape(cx, cy + 1, r + 1.2f, rgba(10, 12, 16, 200));   /* the dark edge, a touch lower */
+	gear_shape(cx, cy, r, c);
+	circle(cx, cy, r * 0.62f, rgba(c.r * 0.88f, c.g * 0.88f, c.b * 0.88f, 255));   /* a slight step on the face */
+	circle(cx, cy, r * 0.30f, hole);
 }
 
 static void main_screen(void) {
@@ -702,6 +735,43 @@ static void main_screen(void) {
 	}
 }
 
+/* a thick arc: part of a ring from angle a0 to a1 (radians, 0 = right, down is positive) */
+static void arc(float cx, float cy, float r, float th, float a0, float a1, Color c) {
+	int n = 12;
+	for (int i = 0; i < n; i++) {
+		float u0 = a0 + (a1 - a0) * i / n, u1 = a0 + (a1 - a0) * (i + 1) / n;
+		float ri = r - th / 2, ro = r + th / 2;
+		float x0 = cx + cosf(u0) * ri, y0 = cy + sinf(u0) * ri, x1 = cx + cosf(u1) * ri, y1 = cy + sinf(u1) * ri;
+		float x2 = cx + cosf(u1) * ro, y2 = cy + sinf(u1) * ro, x3 = cx + cosf(u0) * ro, y3 = cy + sinf(u0) * ro;
+		tri(x0, y0, x1, y1, x2, y2, c);
+		tri(x0, y0, x2, y2, x3, y3, c);
+	}
+}
+static void line_seg(float x0, float y0, float x1, float y1, float w, Color c) {
+	float dx = x1 - x0, dy = y1 - y0, l = sqrtf(dx * dx + dy * dy);
+	if (l <= 0) return;
+	float nx = -dy / l * w / 2, ny = dx / l * w / 2;
+	tri(x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, c);
+	tri(x0 + nx, y0 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny, c);
+}
+
+/* Network transfer's picture: a network cable's plug, to the SD card */
+static void net_picture(float cx, float cy) {
+	const Color white = rgba(255, 255, 255, 255), lite = rgba(226, 230, 238, 255), dim = rgba(176, 184, 200, 255);
+	const Color cable = rgba(90, 160, 230, 255);
+	float lx = cx - 18;
+	rrect_v(lx - 7, cy - 16, 14, 16, 2, lite, dim);     /* the plug */
+	rect(lx - 5, cy - 16, 10, 4, GOLD);                  /* its contacts */
+	for (int k = 0; k < 4; k++) rect(lx - 4.5f + k * 2.6f, cy - 16, 1.2f, 4, rgba(150, 120, 30, 255));
+	rect(lx - 3, cy - 20, 6, 4, dim);                    /* the latch */
+	rect(lx - 4, cy, 8, 4, dim);
+	line_seg(lx, cy + 4, lx, cy + 10, 4, cable);         /* the cable, curling away */
+	arc(lx + 8, cy + 10, 8, 4, 1.57f, 3.14f, cable);
+	tri(cx + 6, cy, cx, cy - 5, cx, cy + 5, GOLD);
+	rect(cx - 6, cy - 2, 7, 4, GOLD);
+	image(&tex_card_sd, cx + 9, cy - 14, 21, 28, 0, 0, white);
+}
+
 /* the Card tools page: a tile for each job, each with a little picture */
 static void tool_picture(int t, float cx, float cy) {
 	const Color white = rgba(255, 255, 255, 255);
@@ -721,9 +791,8 @@ static void tool_picture(int t, float cx, float cy) {
 		if (t == 2) rect(cx + 7, cy + 9, 10, 3, white);              /* minus: take some away */
 		else { rect(cx + 11, cy + 4, 3, 8, white); rect(cx + 11, cy + 14, 3, 3, white); }   /* "!": everything goes */
 		break;
-	case 4:             /* another SD card adapter */
-		image(&tex_card_sd, cx - 22, cy - 18, 24, 32, 0, 0, rgba(255, 255, 255, 120));
-		image(&tex_card_sd, cx - 6, cy - 14, 24, 32, 0, 0, white);
+	case 4:             /* network transfer (see net_picture) */
+		net_picture(cx, cy);
 		break;
 	default:            /* settings */
 		gear(cx, cy, 15, rgba(214, 218, 226, 255), rgba(36, 46, 56, 255));
@@ -733,10 +802,10 @@ static void tool_picture(int t, float cx, float cy) {
 
 static void tools_screen(void) {
 	static const char *names[UI_TOOLS_COUNT] = { "Back up the whole card", "Restore a whole card", "Delete saves",
-	                                             "Format the card", "Choose the SD card", "Settings" };
+	                                             "Format the card", "Network transfer", "Settings" };
 	static const char *desc[UI_TOOLS_COUNT] = { "One file with everything on it", "From a whole-card backup",
 	                                            "Choose saves to remove", "Erase everything on it",
-	                                            "Use another adapter", "Picture, updates, exit" };
+	                                            "From a phone or computer", "Picture, updates, exit" };
 	panel(22, 62, 596, 300);
 	text(34, 80, "Card tools", 12, TITLE, 0, 380);
 	rule(32, 92, 576);
@@ -750,6 +819,60 @@ static void tools_screen(void) {
 		text(x + 80, y + 48, desc[i], 11, SOFT, 0, w - 90);
 		if (on) gold_ring(x, y, w, h);
 	}
+}
+
+/* the Network transfer page */
+static void transfer_screen(void) {
+	panel(22, 62, 596, 300);
+	text(34, 80, "Network transfer", 12, TITLE, 0, 380);
+	rule(32, 92, 576);
+	/* the QR code on white, for a phone's camera */
+	float qx = 40, qy = 106, qs = 160;
+	rect(qx, qy, qs, qs, rgba(255, 255, 255, 255));
+	if (sc.qr_size) {
+		float m = (qs - 16) / sc.qr_size;
+		mode_color();
+		for (int y = 0; y < sc.qr_size; y++)
+			for (int x = 0; x < sc.qr_size; x++)
+				if (sc.qr[y * sc.qr_size + x]) rect(qx + 8 + x * m, qy + 8 + y * m, m + 0.05f, m + 0.05f, rgba(10, 12, 16, 255));
+	} else text(qx + qs / 2, qy + qs / 2, "Starting\x85", 12, rgba(90, 96, 110, 255), 1, 0);
+	text(qx + qs / 2, qy + qs + 14, "Scan with your phone", 11, SOFT, 1, 0);
+	/* the address, for a computer */
+	float x = 222;
+	text(x, 114, "Or open this address on a computer:", 11, SOFT, 0, 0);
+	text(x, 138, sc.tr_addr[0] ? sc.tr_addr : "\x85", 20, GOLD, 0, 370);
+	text(x, 162, sc.tr_state, 11, SOFT, 0, 370);
+	rule(x - 6, 178, 600 - x);
+	text(x, 194, "Files from your phone or computer", 12, TITLE, 0, 0);
+	bool any = false;
+	for (int i = 0; i < UI_TRANSFER_ROWS; i++) {
+		if (!sc.tr_rows[i].name[0]) continue;
+		any = true;
+		float y = 206 + i * 38;
+		rect_v(x - 6, y, 384, 32, rgba(76, 94, 114, 80), rgba(40, 54, 70, 90));
+		image(&tex_card_file, x + 2, y + 6, 16, 20, 0, 0, rgba(255, 255, 255, 255));
+		text(x + 28, y + 10, sc.tr_rows[i].name, 12, TEXT, 0, 330);
+		text(x + 28, y + 24, sc.tr_rows[i].detail, 10, SOFT, 0, 330);
+		float p = sc.tr_rows[i].progress;
+		if (p >= 0) {
+			rrect_v(x + 250, y + 20, 120, 5, 2, rgba(0, 0, 0, 140), rgba(0, 0, 0, 140));
+			if (p > 0) rrect_v(x + 250, y + 20, 120 * clamp01(p), 5, 2, rgba(255, 232, 138, 255), rgba(216, 176, 48, 255));
+		}
+	}
+	if (!any) text(x, 222, "Nothing yet. Choose files on the page, and they'll show here.", 11, DIM, 0, 370);
+}
+
+/* a message across the top, fading in and out over about three seconds */
+static void toast_draw(void) {
+	if (!sc.toast[0]) return;
+	float t = (now_ms() - sc.toast_at) / 1000.0f;
+	float a = clamp01(t / 0.2f) * clamp01((3.2f - t) / 0.4f);
+	if (a <= 0) return;
+	float w = text_width(sc.toast, 13) + 40, x = 320 - w / 2, y = 64;
+	outline(x - 1, y - 1, w + 2, 34 + 2, 4, 1, rgba(11, 11, 32, (u8)(255 * a)));
+	rrect_v(x, y, w, 34, 3, rgba(42, 34, 140, (u8)(240 * a)), rgba(59, 44, 182, (u8)(240 * a)));
+	outline(x, y, w, 34, 3, 1, rgba(175, 175, 255, (u8)(153 * a)));
+	text(320, y + 17, sc.toast, 13, rgba(0xec, 0xeb, 0xff, (u8)(255 * a)), 1, 0);
 }
 
 /* the Settings page */
@@ -959,10 +1082,12 @@ static void draw_frame(void) {
 		else if (sc.screen == UI_TOOLS) tools_screen();
 		else if (sc.screen == UI_UPDATE) update_screen();
 		else if (sc.screen == UI_SETTINGS) settings_screen();
+		else if (sc.screen == UI_TRANSFER) transfer_screen();
 		else main_screen();
 		status_bar();
 		overlay_panel();
 		hints_row();   /* (over the panel's shade: they're for the panel too) */
+		toast_draw();
 	}
 	U();
 }

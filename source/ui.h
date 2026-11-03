@@ -45,7 +45,7 @@ GXRModeObj *ui_video_mode(void);
 
 /* ------------------------------------------------------------------ scene */
 
-enum { UI_SPLASH, UI_MAIN, UI_LIST, UI_TOOLS, UI_UPDATE, UI_SETTINGS };
+enum { UI_SPLASH, UI_MAIN, UI_LIST, UI_TOOLS, UI_UPDATE, UI_SETTINGS, UI_TRANSFER };
 /* what a row's chip says */
 enum { UI_ST_NONE, UI_ST_NEW, UI_ST_CHANGED, UI_ST_BACKED_UP, UI_ST_ON_CARD, UI_ST_NOT_ON_CARD };
 enum { UI_OVERLAY_NONE, UI_OVERLAY_DEVICES };
@@ -64,6 +64,15 @@ void ui_progress(float f);                              /* a bar in the descript
  * key is S (the Control Stick), A, B, X, Y, Z, ST (START) or none ("label") */
 #define UI_HINTS_MAX 5
 void ui_hints(const char *const *hints, int n);
+/* a message across the top that fades after a few seconds ("Press B again to exit") */
+void ui_toast(const char *msg);
+
+/* the Network transfer page: the QR code (size x size modules, 1 = dark;
+ * size 0 = none yet), the address, a line about the network, and the files
+ * that have come in (newest first) */
+#define UI_TRANSFER_ROWS 4
+void ui_transfer_page(const unsigned char *qr, int size, const char *address, const char *state);
+void ui_transfer_row(int row, const char *name, const char *detail, float progress);   /* progress < 0: done; name "": none */
 void ui_hints_push(void);   /* keeps the controls shown now (for a question), */
 void ui_hints_pop(void);    /* and brings them back */
 

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GCMM exFAT</title>
+<style>
+  :root { --bg: #08080b; --line: #25252b; --panel: #142226; --panel2: #0e171a; --text: #eef0f6; --soft: #a6b0c3;
+          --gold: #e8cf4a; --indigo: #3b2cb6; --indigo2: #2a228c; --green: #5fe39a; --red: #ff5c7c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
+         background-image: linear-gradient(var(--line) 2px, transparent 2px), linear-gradient(90deg, var(--line) 2px, transparent 2px);
+         background-size: 24px 24px; min-height: 100vh; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+  .logo { background: linear-gradient(#6e60ec, #2c2296); border-radius: 10px; padding: 6px 12px 5px; font-weight: 800;
+          line-height: 1; box-shadow: 0 4px 12px #0008; }
+  .logo b { display: block; font-size: 22px; letter-spacing: 2px; }
+  .logo span { display: block; font-size: 12px; color: var(--gold); text-align: right; }
+  h1 { font-size: 18px; margin: 0; }
+  header p { margin: 2px 0 0; color: var(--soft); font-size: 14px; }
+  .panel { background: linear-gradient(var(--panel), var(--panel2)); border: 1px solid #c8d0dc8c; border-radius: 6px;
+           padding: 16px; box-shadow: 0 6px 18px #000a; }
+  .drop { display: block; border: 2px dashed #c8d0dc66; border-radius: 6px; padding: 28px 16px; text-align: center; cursor: pointer; }
+  .drop.over { border-color: var(--gold); background: #e8cf4a12; }
+  .drop strong { display: block; font-size: 18px; margin-bottom: 4px; }
+  .drop small { color: var(--soft); }
+  .btn { display: inline-block; margin-top: 14px; background: linear-gradient(#4cb8f0, #2a92d8); color: #fff; font-weight: 700;
+         padding: 10px 22px; border-radius: 4px; }
+  input[type=file] { display: none; }
+  .how { color: var(--soft); font-size: 14px; margin: 14px 2px 0; }
+  .how b { color: var(--text); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; color: #9fb4ff; margin: 22px 2px 8px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { background: #4c5e7240; border-top: 1px solid #ffffff1e; padding: 10px 12px; margin-bottom: 6px; border-radius: 3px; }
+  li .name { font-weight: 600; overflow-wrap: anywhere; }
+  li .state { color: var(--soft); font-size: 13px; margin-top: 2px; }
+  li .state.ok { color: var(--green); }
+  li .state.wait { color: var(--gold); }
+  li .state.bad { color: var(--red); }
+  .bar { height: 5px; background: #0008; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: linear-gradient(#ffe88a, #d8b030); width: 0; }
+  .empty { color: var(--soft); font-size: 14px; padding: 4px 2px; }
+  h2 a { float: right; color: var(--gold); text-decoration: none; text-transform: none; letter-spacing: 0; font-size: 13px; }
+  .dl { display: flex; align-items: center; justify-content: space-between; gap: 10px; text-decoration: none; color: var(--text); }
+  .dl .size { color: var(--soft); font-size: 13px; white-space: nowrap; }
+  .dl .get { color: var(--gold); font-weight: 700; font-size: 13px; white-space: nowrap; }
+  footer { color: #6c7486; font-size: 12px; margin-top: 28px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="logo"><b>GCMM</b><span>exFAT</span></div>
+    <div><h1>Send files to your GameCube</h1><p>They go onto the SD card it's using.</p></div>
+  </header>
+
+  <div class="panel">
+    <label class="drop" id="drop">
+      <strong>Send files</strong>
+      <small>or drag them here from your computer</small><br>
+      <span class="btn">Choose files</span>
+      <input type="file" id="pick" multiple>
+    </label>
+    <p class="how">On the GameCube, you'll be asked <b>where each file goes</b> on the SD card. <b>Zip files are unzipped</b> into the folder you choose.</p>
+  </div>
+
+  <h2>Sent</h2>
+  <ul id="list"><li class="empty" id="none">Nothing sent yet.</li></ul>
+
+  <h2>Backups on the SD card <a href="#" id="refresh">Refresh</a></h2>
+  <ul id="backups"><li class="empty">Looking&hellip;</li></ul>
+
+  <footer>GCMM exFAT &middot; only works while Network transfer is open on the GameCube</footer>
+</main>
+<script>
+(function () {
+  var list = document.getElementById('list'), none = document.getElementById('none');
+  var queue = [], busy = false;
+
+  function size(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+
+  function row(file) {
+    if (none) { none.remove(); none = null; }
+    var li = document.createElement('li');
+    li.innerHTML = '<div class="name"></div><div class="state">Waiting</div><div class="bar"><i></i></div>';
+    li.querySelector('.name').textContent = file.name + '  ·  ' + size(file.size);
+    list.insertBefore(li, list.firstChild);
+    return li;
+  }
+  function say(li, text, cls) { var s = li.querySelector('.state'); s.textContent = text; s.className = 'state' + (cls ? ' ' + cls : ''); }
+
+  /* after the upload: the GameCube asks where to put it; this asks the
+     GameCube how that's going until it's done */
+  function follow(li, id) {
+    var x = new XMLHttpRequest();
+    x.open('GET', '/status?id=' + id + '&t=' + Date.now());
+    x.onload = function () {
+      var r = {};
+      try { r = JSON.parse(x.responseText); } catch (e) {}
+      if (r.state === 'done') { say(li, r.text, 'ok'); backups(); next(); }
+      else if (r.state === 'failed') { say(li, r.text, 'bad'); next(); }
+      else { say(li, r.text || 'Choose where it goes on the GameCube', 'wait'); setTimeout(function () { follow(li, id); }, 700); }
+    };
+    x.onerror = function () { say(li, 'The GameCube stopped answering.', 'bad'); next(); };
+    x.send();
+  }
+
+  function send(item) {
+    var li = item.li, bar = li.querySelector('.bar i');
+    var x = new XMLHttpRequest();
+    x.open('POST', '/upload?name=' + encodeURIComponent(item.file.name));
+    x.upload.onprogress = function (e) { if (e.lengthComputable) { bar.style.width = (100 * e.loaded / e.total) + '%'; say(li, 'Sending  ·  ' + size(e.loaded) + ' of ' + size(e.total)); } };
+    x.onload = function () {
+      bar.style.width = '100%';
+      var r = {};
+      try { r = JSON.parse(x.responseText); } catch (e) {}
+      if (x.status === 200 && r.id) follow(li, r.id);
+      else { say(li, r.text || 'The GameCube couldn’t take it (' + x.status + ').', 'bad'); next(); }
+    };
+    x.onerror = function () { say(li, 'Couldn’t reach the GameCube. Is Network transfer still open?', 'bad'); next(); };
+    x.send(item.file);
+  }
+
+  /* one at a time: each needs its own question on the GameCube */
+  function next() { busy = false; if (queue.length) { busy = true; send(queue.shift()); } }
+  function add(files) {
+    for (var i = 0; i < files.length; i++) queue.push({ file: files[i], li: row(files[i]) });
+    if (!busy) next();
+  }
+
+  /* the backups in MCBACKUP, to download */
+  function backups() {
+    var ul = document.getElementById('backups');
+    var x = new XMLHttpRequest();
+    x.open('GET', '/list?t=' + Date.now());
+    x.onload = function () {
+      var files = [];
+      try { files = JSON.parse(x.responseText); } catch (e) {}
+      ul.innerHTML = '';
+      if (!files.length) { ul.innerHTML = '<li class="empty">No backups in MCBACKUP yet.</li>'; return; }
+      files.sort(function (a, b) { return a.path.toLowerCase() < b.path.toLowerCase() ? -1 : 1; });
+      files.forEach(function (f) {
+        var li = document.createElement('li'), a = document.createElement('a');
+        a.className = 'dl';
+        a.href = '/file?path=' + encodeURIComponent(f.path);
+        a.innerHTML = '<span class="name"></span><span><span class="size"></span>&nbsp;&nbsp;<span class="get">Download</span></span>';
+        a.querySelector('.name').textContent = f.path;
+        a.querySelector('.size').textContent = size(f.size);
+        li.appendChild(a);
+        ul.appendChild(li);
+      });
+    };
+    x.onerror = function () { ul.innerHTML = '<li class="empty">Couldn\u2019t reach the GameCube.</li>'; };
+    x.send();
+  }
+  document.getElementById('refresh').onclick = function (e) { e.preventDefault(); backups(); };
+  backups();
+
+  document.getElementById('pick').onchange = function () { add(this.files); this.value = ''; };
+  var drop = document.getElementById('drop');
+  ['dragenter', 'dragover'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
+  ['dragleave', 'drop'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.remove('over'); }); });
+  drop.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files) add(e.dataTransfer.files); });
+})();
+</script>
+</body>
+</html>
