@@ -8,6 +8,7 @@ GCMM exFAT backs up, restores and deletes the saves on your GameCube memory card
 - **display settings**: resolution, 4:3 or 16:9, picture width and overscan
 - **Update from GitHub**, right from Settings, with a network adapter
 - **Network transfer**: send files to the SD card from a phone or computer (zips are unzipped), and download your backups
+- **Virtual memory cards**: the card images your Launcher keeps on the SD card work just like real cards: back up, restore, delete, format, and copy saves between real and virtual cards
 - both memory cards shown at the top when there's one in each slot
 - the controls along the bottom of every screen, and menu sounds
 - a new logo and splash screen
@@ -16,13 +17,11 @@ It runs on the GameCube only.
 
 ## What it does
 
-<img width="1280" height="960" alt="gcmm-exfat-02-main" src="https://github.com/user-attachments/assets/b36805b0-0db9-4b09-94b5-01f13dbeb4a4" />
-
 The main screen has three big choices:
 
 - **Back up**: the saves on the memory card, each marked **New** (no backup yet), **Changed** (newer than its backup) or **Backed up**. The new and changed ones start out ticked; X backs up the ticked saves.
 - **Restore**: the saves (.gci, .gcs and .sav) in `MCBACKUP` on the SD card, and the folders in it, each marked whether it's on the memory card already. Tick the ones you want and press X. If some are on the card already, you're asked once whether to replace them.
-- **Card tools**: a page of its own to back up a whole memory card as a .raw image, restore a whole card (.raw, .gcp and .mci), delete saves, format the card, use Network transfer, and open Settings.
+- **Card tools**: a page of its own to back up a whole memory card as a .raw image, restore a whole card (.raw, .gcp and .mci), copy saves between cards, delete saves, format the card, make a new virtual card, use Network transfer, and open Settings.
 
 Every save shows its own icon and comment. The bar along the bottom says how many saves you've ticked and where they'll go, and under it are the buttons you can press.
 
@@ -48,9 +47,6 @@ The buttons that do something on each screen are shown along the bottom.
 
 ## Settings
 
-<img width="1280" height="960" alt="gcmm-exfat-11-settings" src="https://github.com/user-attachments/assets/32130869-ab0f-4e76-aef8-2d2b382cd8f4" />
-
-
 Press START on the main screen, or choose Settings in Card tools.
 
 - **Resolution**: Auto (480p with a component cable), 480i or 480p. A new resolution goes back to the old one after 10 seconds unless you press A, in case your TV can't show it.
@@ -64,10 +60,19 @@ Press START on the main screen, or choose Settings in Card tools.
 
 They're kept in `MCBACKUP/gcmm.ini` on the SD card, and read before the splash screen shows, so it's in 16:9 too when that's set.
 
+## Virtual memory cards
+
+Some Launchers can keep a virtual memory card on the SD card for games to use instead of a real one: a card image per slot and region, in `swiss/saves` (`MemoryCardA.USA.raw`, `MemoryCardB.JPN.raw` and so on). GCMM exFAT finds them and treats them like real cards.
+
+- **Choosing a card:** when there's more than one card around, real or virtual, Back up, Restore, Delete saves, Format and the whole-card jobs ask which one to use.
+- **Copy between cards** (Card tools): pick the card to copy from and the one to copy to, real or virtual, either way. Each save shows whether it's on the other card already; tick the ones you want and press X.
+- **New virtual card** (Card tools): choose the slot, region and size (59, 251, 1019 or 2043 blocks), and it's made on the SD card, formatted and ready.
+- A blank virtual card (as a Launcher first makes it) isn't formatted until a game formats it. Format the card in Card tools formats it straight away.
+- Whole-card backups of a virtual card go to `MCBACKUP` like a real card's, and any whole-card image can be restored onto a virtual card.
+
+GCMM exFAT reads and writes the card's own directory and block table inside the image, keeping its checksums right and changing the spare copy first, as a real memory card does, so games and your Launcher see a normal, healthy card.
+
 ## Network transfer
-
-<img width="1280" height="960" alt="gcmm-exfat-09-network-transfer" src="https://github.com/user-attachments/assets/3bc3cd13-53bf-4946-959c-d80082776606" />
-
 
 In Card tools, with a Broadband Adapter or a WIZnet-based adapter (such as the ETH2GC) connected to your router. Scan the QR code with your phone, or type the address it shows into a browser on a computer on the same network.
 
@@ -77,9 +82,6 @@ In Card tools, with a Broadband Adapter or a WIZnet-based adapter (such as the E
 It only works while the Network transfer page is open. Files wait in a `gcmm-incoming` folder until you choose where they go.
 
 ## Update from GitHub
-
-<img width="1280" height="960" alt="gcmm-exfat-12-update" src="https://github.com/user-attachments/assets/ecc91a66-7389-4661-8187-1c0d626ad551" />
-
 
 With a Broadband Adapter or a WIZnet-based adapter (such as the ETH2GC) connected to your router, Settings > Update from GitHub checks this repository's latest release. If it's newer, you see what's new in it, and A downloads and installs it: the new `default.dol` replaces the one GCMM exFAT was started from (with its banner and `cacert.pem`), and it starts straight away. Your settings and backups are left alone. If anything goes wrong, nothing is changed.
 
