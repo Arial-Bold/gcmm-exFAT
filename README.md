@@ -1,15 +1,13 @@
 # GCMM exFAT
 
-GCMM exFAT backs up, restores and deletes the saves on your GameCube memory cards, using an SD card. It's an unofficial fork of [suloku's GCMM](https://github.com/suloku/gcmm) for the GameCube.
-
-<img width="1280" height="960" alt="gcmm-exfat-01-splash" src="https://github.com/user-attachments/assets/85549d55-05ce-45ff-afe6-34bb9d511024" />
-
+GCMM exFAT backs up, restores and deletes the saves on your GameCube memory cards, using an SD card. It's an unofficial fork of [suloku's GCMM](https://github.com/suloku/gcmm) for the GameCube, with:
 
 - **exFAT SD cards**, as well as FAT and FAT32
 - a new look in the style of the GameCube's own menus, built around the three jobs: **Back up**, **Restore** and **Card tools**
 - tick boxes, so you can back up or restore several saves at once, and labels that say which saves are new, changed or already backed up
 - **display settings**: resolution, 4:3 or 16:9, picture width and overscan
 - **Update from GitHub**, right from Settings, with a network adapter
+- **Network transfer**: send files to the SD card from a phone or computer (zips are unzipped), and download your backups
 - both memory cards shown at the top when there's one in each slot
 - the controls along the bottom of every screen, and menu sounds
 - a new logo and splash screen
@@ -18,16 +16,11 @@ It runs on the GameCube only.
 
 ## What it does
 
-<img width="1280" height="960" alt="gcmm-exfat-02-main" src="https://github.com/user-attachments/assets/f1a6b81a-837a-4840-ae58-24a3c49fed3b" />
-
 The main screen has three big choices:
 
 - **Back up**: the saves on the memory card, each marked **New** (no backup yet), **Changed** (newer than its backup) or **Backed up**. The new and changed ones start out ticked; X backs up the ticked saves.
 - **Restore**: the saves (.gci, .gcs and .sav) in `MCBACKUP` on the SD card, and the folders in it, each marked whether it's on the memory card already. Tick the ones you want and press X. If some are on the card already, you're asked once whether to replace them.
-- **Card tools**: a page of its own to back up a whole memory card as a .raw image, restore a whole card (.raw, .gcp and .mci), delete saves, format the card, choose the SD card, and open Settings.
-
-
-<img width="1280" height="960" alt="gcmm-exfat-03-back-up" src="https://github.com/user-attachments/assets/4dafb2d3-d284-4cfe-a4f0-f2dd5c66d9cc" />
+- **Card tools**: a page of its own to back up a whole memory card as a .raw image, restore a whole card (.raw, .gcp and .mci), delete saves, format the card, use Network transfer, and open Settings.
 
 Every save shows its own icon and comment. The bar along the bottom says how many saves you've ticked and where they'll go, and under it are the buttons you can press.
 
@@ -45,7 +38,7 @@ Download `gcmm.zip` from the Releases page and copy the `gcmm` folder in it to y
 | A | Choose; in a list, tick a save or open a folder |
 | Y | Tick every save (or none) |
 | X | Back up, restore or delete the ticked saves |
-| B | Back; on the main screen, Exit to Launcher |
+| B | Back; on the main screen, twice to exit to the Launcher |
 | Left / Right | A page at a time in a list |
 | START | Settings (on the main screen) |
 
@@ -66,17 +59,26 @@ Press START on the main screen, or choose Settings in Card tools.
 
 They're kept in `MCBACKUP/gcmm.ini` on the SD card, and read before the splash screen shows, so it's in 16:9 too when that's set.
 
+## Network transfer
+
+In Card tools, with a Broadband Adapter or a WIZnet-based adapter (such as the ETH2GC) connected to your router. Scan the QR code with your phone, or type the address it shows into a browser on a computer on the same network.
+
+- **Sending files:** choose files on the page (or drag them onto it on a computer). Each one arrives whole, then the GameCube asks where it goes: A opens a folder or chooses "Put it here", B goes up a folder. A zip is unzipped into the folder you choose (Z keeps it as a zip instead). If a file with the same name is there already, you can replace it or keep both.
+- **Downloading backups:** the page lists the backups in `MCBACKUP` (and its folders); tap one to save it.
+
+It only works while the Network transfer page is open. Files wait in a `gcmm-incoming` folder until you choose where they go.
+
 ## Update from GitHub
 
 With a Broadband Adapter or a WIZnet-based adapter (such as the ETH2GC) connected to your router, Settings > Update from GitHub checks this repository's latest release. If it's newer, you see what's new in it, and A downloads and installs it: the new `default.dol` replaces the one GCMM exFAT was started from (with its banner and `cacert.pem`), and it starts straight away. Your settings and backups are left alone. If anything goes wrong, nothing is changed.
 
 ## Leaving GCMM exFAT
 
-B on the main screen (or Exit to Launcher in Settings) starts the Launcher chosen in Settings. If there's no .dol at the root of the SD card, it goes back to the loader that started GCMM exFAT if there is one, or offers to restart the GameCube.
+Press B twice on the main screen (the first press asks, across the top), or choose Exit to Launcher in Settings. It starts the Launcher chosen in Settings. If there's no .dol at the root of the SD card, it goes back to the loader that started GCMM exFAT if there is one, or offers to restart the GameCube.
 
 ## Choosing the device when starting
 
-GCMM exFAT can be started with one of these arguments (for example from a .cli file next to the .dol): `ask` (always show the device choice), `sdgecko`, `sdgeckoA`, `sdgeckoB`, `sd2sp2` or `gcloader`.
+With more than one SD card adapter, GCMM exFAT asks which to use when it starts. It can also be started with one of these arguments (for example from a .cli file next to the .dol): `ask` (always show the device choice), `sdgecko`, `sdgeckoA`, `sdgeckoB`, `sd2sp2` or `gcloader`.
 
 ## Building
 
@@ -89,7 +91,7 @@ docker run --rm -v "$PWD:/src" -w /src ghcr.io/extremscorner/libogc2:latest make
 
 Every push to GitHub builds it too (see the Actions tab), and the result is a zip with the `gcmm` folder ready for the SD card.
 
-The font textures, logo and card pictures are made by `tools/make_assets.py` (needs Python 3 with Pillow and NumPy), which writes `source/ui_assets.c` and `.h`. `tools/make_banner.py` makes `dist/opening.bnr`, the banner and name your Launcher shows.
+The font textures, logo and card pictures are made by `tools/make_assets.py` (needs Python 3 with Pillow and NumPy), which writes `source/ui_assets.c` and `.h`. `tools/make_banner.py` makes `dist/opening.bnr`, the banner and name your Launcher shows. `tools/make_webpage.py` turns `source/net/webpage.html` (the Network transfer page) into `source/net/webpage.h`.
 
 ## Credits
 
@@ -98,4 +100,4 @@ The font textures, logo and card pictures are made by `tools/make_assets.py` (ne
 - [mbedTLS](https://github.com/Mbed-TLS/mbedtls) (Apache 2.0) for the secure connection to GitHub; `cacert.pem` holds Mozilla's trusted root certificates
 - Font: M PLUS Rounded 1c (SIL Open Font License, see `tools/fonts/OFL.txt`)
 
-GCMM is under the GPL (see `COPYING`).
+GCMM exFAT is free software under the GNU General Public License, version 3 or later, like GCMM (see `COPYING`). See `NOTICE` for the copyright and the other parts it uses. It isn't affiliated with Nintendo.

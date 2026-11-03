@@ -8,7 +8,7 @@ GNU General Public License, version 3 or later (see COPYING). You can use,
 share and change it under those terms.
 
 The parts written for GCMM exFAT that also appear in Arial-Bold's other
-GameCube apps (the network and update code in source/net, the menu sounds
+GameCube apps (the network, transfer and update code in source/net, the menu sounds
 in source/sfxsynth.c and source/sound.c, and the program loader in
 source/dolload.c) are additionally available under the MIT License from
 those apps. Within GCMM exFAT they are distributed under the GPL with the
@@ -16,6 +16,7 @@ rest of the program.
 
 Other parts:
 - mbedTLS (downloaded by get-deps.sh): Apache License 2.0.
+- QR Code generator library (source/net/qrcodegen.c): Project Nayuki, MIT License.
 - cacert.pem: Mozilla's trusted root certificates (Mozilla Public License 2.0).
 - M PLUS Rounded 1c font: SIL Open Font License (tools/fonts/OFL.txt).
 - libogc2 and libdvm: Extrems and the devkitPro team, under their own licences.
