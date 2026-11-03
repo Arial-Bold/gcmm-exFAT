@@ -355,6 +355,177 @@ void UpdateMainCards(void)
 	ui_main_card2(shown == 2 ? name[1] : "", shown == 2 ? info[1] : "");
 }
 
+/* ------------------------------------------------------------ which card */
+
+/* The cards a job can use: real cards in their slots, then the virtual
+ * cards on the SD card */
+#define CHOICES_MAX (2 + VCARD_MAX)
+static int choice_slot[CHOICES_MAX];
+static char choice_name[CHOICES_MAX][48], choice_info[CHOICES_MAX][64];
+static int nchoices;
+
+static void list_choices(int exclude)
+{
+	nchoices = 0;
+	bool free_a = CUR_DEVICE != DEV_GCSDA, free_b = CUR_DEVICE != DEV_GCSDB;   /* an SD Gecko takes its slot */
+	for (s32 slot = CARD_SLOTA; slot <= CARD_SLOTB; slot++) {
+		char info[48];
+		if (slot == exclude || !(slot == CARD_SLOTA ? free_a : free_b)) continue;
+		if (slot_info(slot, info, sizeof(info)) != 1) continue;
+		choice_slot[nchoices] = slot;
+		CardSlotName(slot, choice_name[nchoices], sizeof(choice_name[0]));
+		snprintf(choice_info[nchoices], sizeof(choice_info[0]), "In Slot %c" DOT "%s", slot == CARD_SLOTB ? 'B' : 'A', info);
+		nchoices++;
+	}
+	if (have_sd) VirtualCardsScan();
+	for (int i = 0; have_sd && i < VirtualCardCount() && nchoices < CHOICES_MAX; i++) {
+		int slot = VSLOT_BASE + i;
+		const VirtualCard *v = VirtualCardGet(slot);
+		if (slot == exclude) continue;
+		choice_slot[nchoices] = slot;
+		CardSlotName(slot, choice_name[nchoices], sizeof(choice_name[0]));
+		if (v->formatted)
+			snprintf(choice_info[nchoices], sizeof(choice_info[0]), "On the SD card" DOT "%d blocks" DOT "%d save%s", v->blocks, v->saves, v->saves == 1 ? "" : "s");
+		else snprintf(choice_info[nchoices], sizeof(choice_info[0]), "On the SD card" DOT "not formatted yet");
+		nchoices++;
+	}
+}
+
+static void choice_status(int i)
+{
+	char l2[120];
+	const VirtualCard *v = VirtualCardGet(choice_slot[i]);
+	if (!v) snprintf(l2, sizeof(l2), "The memory card in Slot %c.", choice_slot[i] == CARD_SLOTB ? 'B' : 'A');
+	else if (!v->formatted) snprintf(l2, sizeof(l2), "Not formatted yet: a game formats it the first time, or use Format the card.");
+	else snprintf(l2, sizeof(l2), "The virtual memory card your Launcher uses for %s games in Slot %c.", v->region, v->letter);
+	ui_status(choice_name[i], l2);
+}
+
+/* Asks which memory card (real or virtual) a job uses; exclude leaves one
+ * out (-1 for none). With only one card around it's chosen without asking,
+ * unless always. Returns the slot, or -1 if there's none or B was pressed. */
+int ChooseCard(const char *title, int exclude, bool always)
+{
+	list_choices(exclude);
+	if (nchoices == 0) {
+		WaitPrompt(exclude < 0 ? "There's no memory card to use: put one in a slot, or make a virtual card in Card tools."
+		                       : "There's no other memory card to copy to: put one in a slot, or make a virtual card in Card tools.");
+		return -1;
+	}
+	if (nchoices == 1 && !always) return choice_slot[0];
+	int sel = 0, top = 0;
+	const int rows = 6;
+	ui_hints_push();
+	Hints(3, "S:Move", "A:Choose", "B:Back");
+	WaitRelease();
+	for (bool redraw = true;;) {
+		if (redraw) {
+			int shown = nchoices - top < rows ? nchoices - top : rows;
+			ui_overlay(UI_OVERLAY_CARDS, title);
+			for (int i = 0; i < shown; i++) {
+				ui_overlay_row(i, choice_name[top + i], choice_info[top + i]);
+				ui_overlay_row_icon(i, SlotIsVirtual(choice_slot[top + i]) ? UI_ROW_VIRTUAL : UI_ROW_CARD);
+			}
+			ui_overlay_rows(shown);
+			ui_overlay_select(sel - top);
+			choice_status(sel);
+			redraw = false;
+		}
+		read_pad();
+		u32 step = dpad_step();
+		int ns = sel;
+		if (step & PAD_BUTTON_UP) ns = (sel + nchoices - 1) % nchoices;
+		else if (step & PAD_BUTTON_DOWN) ns = (sel + 1) % nchoices;
+		if (ns != sel) {
+			sel = ns;
+			if (sel < top) top = sel;
+			if (sel >= top + rows) top = sel - rows + 1;
+			redraw = true;
+		}
+		if (pad_down & PAD_BUTTON_B) { sel = -1; break; }
+		if (pad_down & PAD_BUTTON_A) break;
+	}
+	ui_overlay(UI_OVERLAY_NONE, "");
+	ui_hints_pop();
+	WaitRelease();
+	return sel < 0 ? -1 : choice_slot[sel];
+}
+
+/* ------------------------------------------------------ new virtual card */
+
+/* Card tools > New virtual card: the slot, region and size, then Make it */
+void NewVirtualCard(void)
+{
+	static const char *regions[] = { "USA", "JPN", "EUR", "KOR", "ALL" };
+	static const int sizes[] = { 59, 251, 1019, 2043 };
+	static int slot = 0, region = 0, size = 3;
+	int row = 0;
+	if (!have_sd) { WaitPrompt("Virtual cards are kept on the SD card, and there isn't one."); return; }
+	ui_hints_push();
+	WaitRelease();
+	for (bool redraw = true;;) {
+		if (redraw) {
+			char s[16], z[32];
+			snprintf(s, sizeof(s), "%c", 'A' + slot);
+			snprintf(z, sizeof(z), "%d blocks", sizes[size]);
+			ui_overlay(UI_OVERLAY_DEVICES, "New virtual card");
+			ui_overlay_row(0, "Slot", s);
+			ui_overlay_row(1, "Region", regions[region]);
+			ui_overlay_row(2, "Size", z);
+			ui_overlay_row(3, "Make it", NULL);
+			ui_overlay_rows(4);
+			ui_overlay_select(row);
+			static const char *help[4][2] = {
+				{ "Slot", "Which slot's virtual card it is: games see it in that slot." },
+				{ "Region", "Games use the virtual card for their own region: USA, JPN, EUR or KOR." },
+				{ "Size", "2043 blocks is the biggest card, and what's made when a game needs one." },
+				{ "Make it", "A blank virtual card on the SD card, formatted and ready for saves." },
+			};
+			ui_status((char *)help[row][0], (char *)help[row][1]);
+			if (row == 3) Hints(3, "S:Move", "A:Make it", "B:Cancel");
+			else Hints(3, "S:Move", "A:Change", "B:Cancel");
+			redraw = false;
+		}
+		read_pad();
+		u32 step = dpad_step();
+		int d = 0;
+		if (step & PAD_BUTTON_UP) { row = (row + 3) % 4; redraw = true; }
+		else if (step & PAD_BUTTON_DOWN) { row = (row + 1) % 4; redraw = true; }
+		else if (step & (PAD_BUTTON_LEFT | PAD_BUTTON_RIGHT)) d = (step & PAD_BUTTON_RIGHT) ? 1 : -1;
+		if (pad_down & PAD_BUTTON_B) break;
+		if ((pad_down & PAD_BUTTON_A) && row < 3) d = 1;
+		if (d) {
+			if (row == 0) slot ^= 1;
+			else if (row == 1) region = (region + 5 + d) % 5;
+			else if (row == 2) size = (size + 4 + d) % 4;
+			redraw = true;
+			if (pad_down & PAD_BUTTON_A) WaitRelease();
+		}
+		if ((pad_down & PAD_BUTTON_A) && row == 3) {
+			char path[96], name[48], msg[200];
+			snprintf(name, sizeof(name), "Virtual card %c (%s)", 'A' + slot, regions[region]);
+			snprintf(path, sizeof(path), "%s:/swiss/saves/MemoryCard%c.%s.raw", fatpath, 'A' + slot, regions[region]);
+			WaitRelease();
+			if (!access(path, F_OK)) {
+				snprintf(msg, sizeof(msg), "%s is already on the SD card. Replace it with a blank one? Its saves will be lost.", name);
+				if (WaitPromptChoiceAZ(msg, "Replace", "Cancel") != 0) { redraw = true; continue; }
+			}
+			ui_overlay(UI_OVERLAY_NONE, "");
+			ShowAction("Making the virtual card\x85");
+			Hints(1, "Please wait");
+			int made = VirtualCardMake('A' + slot, regions[region], sizes[size]);
+			UpdateSDInfo();
+			if (made >= 0) snprintf(msg, sizeof(msg), "Made %s: %d blocks, formatted and ready for saves.", name, sizes[size]);
+			else snprintf(msg, sizeof(msg), "Couldn't make %s (is the SD card full?).", name);
+			WaitPrompt(msg);
+			break;
+		}
+	}
+	ui_overlay(UI_OVERLAY_NONE, "");
+	ui_hints_pop();
+	WaitRelease();
+}
+
 /* ------------------------------------------------------------- settings */
 
 /* The Settings page: the picture, then Update from GitHub and Exit to
@@ -962,8 +1133,10 @@ static void tools_status(void)
 	static const char *help[UI_TOOLS_COUNT][2] = {
 		{ "Back up the whole card", "Copies everything on the memory card to one file on the SD card." },
 		{ "Restore a whole card", "Puts a whole-card copy from the SD card back on the memory card." },
+		{ "Copy between cards", "Copy saves from one memory card to another: real or virtual, either way." },
 		{ "Delete saves", "Choose saves to delete from the memory card." },
 		{ "Format the card", "Erases everything on the memory card." },
+		{ "New virtual card", "A blank virtual memory card on the SD card, for your Launcher to use." },
 		{ "Network transfer", "Send files from a phone or computer to the SD card, and download your backups." },
 		{ "Settings", "Picture size and position, updates, Exit to Launcher." },
 	};
@@ -975,7 +1148,7 @@ static void tools_status(void)
 /* Returns the job to do, or -1 for back to the main screen */
 static int CardTools(void)
 {
-	static const int codes[UI_TOOLS_COUNT] = { 700, 800, 200, 900, 0, 0 };   /* (Network transfer and Settings happen here) */
+	static const int codes[UI_TOOLS_COUNT] = { 700, 800, 1200, 200, 900, 1300, 0, 0 };   /* (Network transfer and Settings happen here) */
 	in_tools = true;
 	UpdateMainCards();
 	ui_screen(UI_TOOLS);
@@ -993,7 +1166,7 @@ static int CardTools(void)
 		if (pad_down & PAD_BUTTON_B) { in_tools = false; break; }
 		if (pad_down & PAD_BUTTON_A) {
 			if (codes[tools_sel]) { WaitRelease(); return codes[tools_sel]; }
-			if (tools_sel == 4) NetworkTransfer();
+			if (tools_sel == 6) NetworkTransfer();
 			else if (SettingsMenu() == 500) return 500;
 			ui_screen(UI_TOOLS);
 			tools_status();

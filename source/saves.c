@@ -184,10 +184,35 @@ int saves_load_card(int slot)
 	return n;
 }
 
+/* The saves on one card, each marked whether it's on the other card already
+ * (UI_ST_ON_CARD) or not (UI_ST_NOT_ON_CARD, and ticked), for copying */
+int saves_load_card_vs(int slot, int other)
+{
+	char (*keys)[48] = NULL;
+	int nkeys = 0;
+	ui_status("Reading the cards\x85", "");
+	int n2 = CardGetDirectory(other);
+	if (n2 > 0 && (keys = malloc(sizeof(*keys) * n2)) != NULL) {
+		for (int i = 0; i < n2; i++)
+			make_key(keys[i], 48, CardList[i].company, CardList[i].gamecode, (const u8 *)CardList[i].filename);
+		nkeys = n2;
+	}
+	int n = saves_load_card(slot);
+	for (int i = 0; i < n; i++) {
+		SaveRow *r = &save_rows[i];
+		bool there = false;
+		for (int k = 0; k < nkeys && !there; k++) there = !strcmp(keys[k], r->key);
+		r->status = there ? UI_ST_ON_CARD : UI_ST_NOT_ON_CARD;
+		r->checked = !there;
+	}
+	free(keys);
+	return n;
+}
+
 int saves_count_new(int slot, int *total)
 {
 	*total = 0;
-	if (CARD_Probe(slot) <= 0) return -1;
+	if (!CardSlotPresent(slot)) return -1;
 	int n = CardGetDirectory(slot);
 	if (n <= 0) return n < 0 ? -1 : 0;
 	*total = n;
@@ -218,7 +243,7 @@ int saves_load_sd(int mode, int slot)
 	card_keys = NULL;
 	ncard_keys = 0;
 	have_card_list = false;
-	if (mode == 1 && CARD_Probe(slot) > 0) {
+	if (mode == 1 && CardSlotPresent(slot)) {
 		ui_status("Reading the memory card\x85", "");
 		int n = CardGetDirectory(slot);
 		have_card_list = n >= 0;

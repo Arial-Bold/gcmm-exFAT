@@ -32,6 +32,7 @@ void saves_clear(void);
  * marked against the backups in MCBACKUP. Shows its progress in the
  * description bar. Returns the count (0 too if the card couldn't be read). */
 int saves_load_card(int slot);
+int saves_load_card_vs(int slot, int other);   /* for copying: marked against the other card */
 
 /* The folders and saves in the SD card's current folder (currFolder), marked
  * against what's on the memory card (if there is one). Rows are looked at

@@ -46,7 +46,7 @@
 #define GCLOADER_PATH "gcl"
 char fatpath[4];
 
-const char appversion[] = "v1.1";
+const char appversion[] = "v1.2";
 int mode;
 int cancel;
 int doall;
@@ -64,7 +64,7 @@ extern syssramex* __SYS_LockSramEx();
 extern u32 __SYS_UnlockSramEx(u32 write);
 extern u8 imageserial[12];
 
-#define NOFAT_MSG "There's no SD card. Choose one in Card tools."
+#define NOFAT_MSG "There's no SD card. Put one in and start GCMM exFAT again."
 
 static void updatePAD(u32 retrace)
 {
@@ -252,7 +252,13 @@ static void use_device(void)
 	UpdateSDInfo();
 }
 
-static char slot_letter(void) { return MEM_CARD ? 'B' : 'A'; }
+/* "Memory Card A", or "Virtual card A (USA)" */
+static const char *card_name(void)
+{
+	static char name[48];
+	CardSlotName(MEM_CARD, name, sizeof(name));
+	return name;
+}
 
 /****************************************************************************
 * Back up saves from the memory card to the SD card
@@ -265,7 +271,7 @@ static bool card_present(void);
 
 static void slot_line(char *out, size_t n, const char *fmt)
 {
-	snprintf(out, n, fmt, slot_letter());
+	snprintf(out, n, fmt, card_name());
 }
 
 void SD_BackupMode ()
@@ -276,7 +282,9 @@ void SD_BackupMode ()
 	if (!card_present()) return;
 	ui_screen(UI_LIST);
 	ui_list_clear();
-	ui_list_header("Back up  \x95  choose the saves", "");
+	char head[96];
+	snprintf(head, sizeof(head), "Back up  \x95  %s", card_name());
+	ui_list_header(head, "");
 	int n = saves_load_card(MEM_CARD);
 	if (!n)
 	{
@@ -289,7 +297,7 @@ void SD_BackupMode ()
 	char right[32];
 	snprintf(right, sizeof(right), "%d save%s", n, n == 1 ? "" : "s");
 	snprintf(where, sizeof(where), "They go to %s on the SD card.", MCSAVES);
-	PickSpec ps = { "Back up  \x95  choose the saves", right, "Back up",
+	PickSpec ps = { head, right, "Back up",
 	                "Tick the saves to back up with A, or all of them with Y.", where };
 	if (PickList(&ps, &sel) != PICK_GO) return;
 
@@ -348,7 +356,7 @@ void SD_RestoreMode ()
 	int sel = 0;
 
 	sprintf((char*)currFolder, MCSAVES);
-	slot_line(where, sizeof(where), "They go onto Memory Card %c.");
+	slot_line(where, sizeof(where), "They go onto %s.");
 	for (;;)
 	{
 		ui_screen(UI_LIST);
@@ -452,13 +460,13 @@ void MC_DeleteMode (void)
 	}
 	char right[32];
 	snprintf(right, sizeof(right), "%d save%s", n, n == 1 ? "" : "s");
-	slot_line(where, sizeof(where), "They'll be deleted from Memory Card %c.");
+	slot_line(where, sizeof(where), "They'll be deleted from %s.");
 	PickSpec ps = { "Delete saves  \x95  choose the saves", right, "Delete", "Tick the saves to delete with A.", where };
 	if (PickList(&ps, &sel) != PICK_GO) return;
 
 	int todo = 0;
 	for (int i = 0; i < n; i++) if (save_rows[i].checked) todo++;
-	snprintf(buffer, sizeof(buffer), "Delete %d save%s from Memory Card %c? This can't be undone.", todo, todo == 1 ? "" : "s", slot_letter());
+	snprintf(buffer, sizeof(buffer), "Delete %d save%s from %s? This can't be undone.", todo, todo == 1 ? "" : "s", card_name());
 	if (WaitPromptChoiceAZ(buffer, "Delete", "Cancel") != 0) return;
 	int done = 0, k = 0;
 	for (int i = 0; i < n; i++)
@@ -523,7 +531,7 @@ void SD_RawRestoreMode ()
 			continue;
 		}
 		folder_title(title, sizeof(title), "Restore a whole card");
-		snprintf(msg, sizeof(msg), "Everything on Memory Card %c will be replaced.", slot_letter());
+		snprintf(msg, sizeof(msg), "Everything on %s will be replaced.", card_name());
 		PickSpec ps = { title, "", NULL, "Choose the card image to put on the memory card.", msg };
 		int r = PickList(&ps, &sel);
 		if (r == PICK_BACK)
@@ -544,7 +552,9 @@ void SD_RawRestoreMode ()
 		}
 
 #ifdef FLASHIDCHECK
-		/* a card image only goes back on the card it came from */
+		/* a card image only goes back on the card it came from (a virtual
+		 * card can take any) */
+		if (!SlotIsVirtual(MEM_CARD)) {
 		SDLoadCardImageHeader((char*)filelist[s->index]);
 		getserial(imageserial);
 		Card_SerialNo(MEM_CARD);
@@ -556,8 +566,9 @@ void SD_RawRestoreMode ()
 				return;
 			}
 		}
+		}
 #endif
-		snprintf(msg, sizeof(msg), "Put %s on Memory Card %c? Everything on the card now will be lost.", s->title, slot_letter());
+		snprintf(msg, sizeof(msg), "Put %s on %s? Everything on the card now will be lost.", s->title, card_name());
 		if (WaitPromptChoiceAZ(msg, "Restore", "Cancel") != 0) continue;
 		writeStatusBar("Restoring the whole memory card\x85", "");
 		if (RestoreRawImage(MEM_CARD, (char*)filelist[s->index], &writen) == 1)
@@ -576,11 +587,18 @@ void SD_RawRestoreMode ()
  * card that was just put in) */
 static bool card_present(void)
 {
-	char msg[64];
+	char msg[200];
+	if (SlotIsVirtual(MEM_CARD)) {
+		/* a virtual card: there if it's formatted (it can be restored onto or formatted either way) */
+		if (CardSlotPresent(MEM_CARD) || mode == 800 || mode == 900) return true;
+		snprintf(msg, sizeof(msg), "%s isn't formatted yet. A game formats it the first time it's used, or use Format the card in Card tools.", card_name());
+		WaitPrompt(msg);
+		return false;
+	}
 	CARD_Probe(MEM_CARD);
 	VIDEO_WaitVSync ();
 	if (CARD_Probe(MEM_CARD) > 0) return true;
-	sprintf(msg, "Please put a memory card in Slot %c.", slot_letter());
+	sprintf(msg, "Please put a memory card in Slot %c.", MEM_CARD ? 'B' : 'A');
 	WaitPrompt(msg);
 	return false;
 }
@@ -685,6 +703,81 @@ static void exit_to_launcher(void)
 }
 
 /****************************************************************************
+* Copy saves between two memory cards, real or virtual (Card tools)
+****************************************************************************/
+static void CopyBetweenCards(void)
+{
+	char buffer[200], from_name[48], to_name[48], title[160], where[120], right[32];
+	int from = ChooseCard("Copy saves from which memory card?", -1, true);
+	if (from < 0) return;
+	CardSlotName(from, from_name, sizeof(from_name));
+	snprintf(buffer, sizeof(buffer), "Copy them to which memory card?");
+	int to = ChooseCard(buffer, from, true);
+	if (to < 0) return;
+	CardSlotName(to, to_name, sizeof(to_name));
+	MEM_CARD = from;
+	if (!card_present()) return;
+	MEM_CARD = to;
+	if (!card_present()) return;
+
+	u16 room = FreeBlocks(to);
+	ui_screen(UI_LIST);
+	ui_list_clear();
+	int n = saves_load_card_vs(from, to);
+	if (n <= 0)
+	{
+		snprintf(buffer, sizeof(buffer), "There are no saves on %s.", from_name);
+		WaitPrompt(buffer);
+		return;
+	}
+	snprintf(title, sizeof(title), "Copy  \x95  %s  \x95  to %s", from_name, to_name);
+	snprintf(right, sizeof(right), "%d save%s", n, n == 1 ? "" : "s");
+	snprintf(where, sizeof(where), "They go onto %s (%u block%s free).", to_name, room, room == 1 ? "" : "s");
+	PickSpec ps = { title, right, "Copy", "Tick the saves to copy with A, or all of them with Y.", where };
+	int sel = 0;
+	if (PickList(&ps, &sel) != PICK_GO) return;
+
+	int todo = 0, there = 0;
+	for (int i = 0; i < save_count; i++)
+		if (save_rows[i].checked) { todo++; if (save_rows[i].status == UI_ST_ON_CARD) there++; }
+	card_replace = REPLACE_ASK;
+	if (there)
+	{
+		if (there == 1) snprintf(buffer, sizeof(buffer), "One of these is on %s already. Replace it?", to_name);
+		else snprintf(buffer, sizeof(buffer), "%d of these are on %s already. Replace them?", there, to_name);
+		card_replace = WaitPromptChoice(buffer, "Leave them", "Replace") == 1 ? REPLACE_YES : REPLACE_NO;
+	}
+	int done = 0, k = 0;
+	for (int i = 0; i < save_count; i++)
+	{
+		SaveRow *s = &save_rows[i];
+		if (!s->checked) continue;
+		k++;
+		snprintf(buffer, sizeof(buffer), "Copying %s\x85", s->title);
+		char l2[32];
+		snprintf(l2, sizeof(l2), "%d of %d", k, todo);
+		writeStatusBar(buffer, l2);
+		ui_progress((float)(k - 1) / todo);
+		if (s->status == UI_ST_ON_CARD && card_replace == REPLACE_NO) continue;
+		if (CardReadFile(from, s->index) && CardWriteFile(to))
+		{
+			done++;
+			s->status = UI_ST_ON_CARD;
+			s->checked = false;
+			continue;
+		}
+		ui_progress(-1);
+		snprintf(buffer, sizeof(buffer), "Couldn't copy %s. Carry on with the rest?", s->title);
+		if (WaitPromptChoice(buffer, "Stop", "Carry on") != 1) break;
+	}
+	card_replace = REPLACE_ASK;
+	ui_progress(-1);
+	if (done == todo) snprintf(buffer, sizeof(buffer), "Copied %d save%s to %s.", done, done == 1 ? "" : "s", to_name);
+	else snprintf(buffer, sizeof(buffer), "Copied %d of the %d saves to %s.", done, todo, to_name);
+	WaitPrompt(buffer);
+}
+
+/****************************************************************************
 * Main
 ****************************************************************************/
 int main (int argc, char *argv[])
@@ -765,17 +858,23 @@ int main (int argc, char *argv[])
 		doall = 0;
 		mode = SelectMode ();
 
-		//SD2SP2 and GC Loader leave both memory card slots free: use the one
-		//with a card in it, and only ask when there's a card in each
-		if (mode != 500 && mode != 1000 && CUR_DEVICE != DEV_GCSDA && CUR_DEVICE != DEV_GCSDB) {
-			if (slot_has_card(CARD_SLOTA, true) && slot_has_card(CARD_SLOTB, true)) {
-				if (WaitPromptChoice ("Which memory card slot?", "Slot B", "Slot A") == 1)
-					MEM_CARD = CARD_SLOTA;
-				else
-					MEM_CARD = CARD_SLOTB;
-			} else {
-				pick_card_slot();
-			}
+		/* which memory card the job is for: a real card, or a virtual card
+		 * on the SD card (asked only when there's more than one) */
+		s32 real_card = MEM_CARD;
+		const char *ask = NULL;
+		switch (mode) {
+		case 200: ask = "Delete saves from which memory card?"; break;
+		case 300: ask = "Back up saves from which memory card?"; break;
+		case 400: ask = "Restore saves to which memory card?"; break;
+		case 700: ask = "Back up which whole memory card?"; break;
+		case 800: ask = "Restore a whole card onto which memory card?"; break;
+		case 900: ask = "Format which memory card?"; break;
+		}
+		if (ask) {
+			pick_card_slot();
+			int c = ChooseCard(ask, -1, false);
+			if (c < 0) { offsetchanged = true; continue; }
+			MEM_CARD = c;
 		}
 
 		switch (mode)
@@ -808,6 +907,12 @@ int main (int argc, char *argv[])
 		case 900 : //Format the card
 			if (card_present()) MC_FormatMode(MEM_CARD);
 			break;
+		case 1200: //Copy between cards
+			CopyBetweenCards();
+			break;
+		case 1300: //A new virtual card
+			NewVirtualCard();
+			break;
 		case 1000: //Choose a device
 			deinitFAT();
 			UpdateTitleInfo();
@@ -821,6 +926,8 @@ int main (int argc, char *argv[])
 			break;
 		}
 
+		MEM_CARD = real_card;   /* (the main screen's card again) */
+		if (SlotIsVirtual(MEM_CARD)) MEM_CARD = CARD_SLOTA;
 		offsetchanged = true;
 		if (mode != 500) MainSummaryRefresh();   /* (the saves may have changed) */
 	}

@@ -122,6 +122,7 @@ static struct {
 	char overlay_title[48];
 	Pair orows[UI_OVERLAY_ROWS];
 	int orow_count, osel;
+	int orow_icon[UI_OVERLAY_ROWS];
 } sc;
 
 static mutex_t lock = LWP_MUTEX_NULL;
@@ -190,12 +191,13 @@ void ui_list_row(int r, const char *title, const char *detail, const char *block
 }
 void ui_list_select(int r) { L(); sc.list_sel = r; U(); }
 void ui_list_scroll(int f, int c, int t) { L(); sc.scroll_first = f; sc.scroll_count = c; sc.scroll_total = t; U(); }
-void ui_overlay(int o, const char *t) { L(); sc.overlay = o; cpy(sc.overlay_title, t, sizeof(sc.overlay_title)); sc.orow_count = 0; sc.osel = 0; U(); }
+void ui_overlay(int o, const char *t) { L(); sc.overlay = o; cpy(sc.overlay_title, t, sizeof(sc.overlay_title)); sc.orow_count = 0; sc.osel = 0; memset(sc.orow_icon, 0, sizeof(sc.orow_icon)); U(); }
 void ui_overlay_row(int r, const char *l, const char *v) {
 	if (r < 0 || r >= UI_OVERLAY_ROWS) return;
 	L(); cpy(sc.orows[r].label, l, sizeof(sc.orows[r].label)); cpy(sc.orows[r].value, v, TXT); if (!v) sc.orows[r].value[0] = 1; U();
 }
 void ui_overlay_select(int r) { L(); sc.osel = r; U(); }
+void ui_overlay_row_icon(int r, int icon) { if (r >= 0 && r < UI_OVERLAY_ROWS) { L(); sc.orow_icon[r] = icon; U(); } }
 void ui_overlay_rows(int n) { L(); sc.orow_count = n; U(); }
 
 /* ------------------------------------------------------- the rows' icons */
@@ -772,6 +774,14 @@ static void net_picture(float cx, float cy) {
 	image(&tex_card_sd, cx + 9, cy - 14, 21, 28, 0, 0, white);
 }
 
+/* a virtual memory card (a card image on the SD card): the memory card
+ * with a little SD card tucked at its lower right */
+static void virtual_card(float x, float y, float w, float h, Color tint) {
+	image(&tex_card_mc, x, y, w, h, 0, 0, tint);
+	float sw = w * 0.42f, sh = h * 0.42f;
+	image(&tex_card_sd, x + w - sw * 0.75f, y + h - sh * 0.95f, sw, sh, 0, 0, tint);
+}
+
 /* the Card tools page: a tile for each job, each with a little picture */
 static void tool_picture(int t, float cx, float cy) {
 	const Color white = rgba(255, 255, 255, 255);
@@ -784,14 +794,27 @@ static void tool_picture(int t, float cx, float cy) {
 		rect(cx - 6, cy - 2, 7, 4, GOLD);
 		break;
 	}
-	case 2: case 3:     /* delete saves, format: the card with a red mark */
+	case 2:             /* copy between cards: a card to a virtual card */
+		image(&tex_card_mc, cx - 30, cy - 14, 21, 28, 0, 0, white);
+		virtual_card(cx + 9, cy - 14, 21, 28, white);
+		tri(cx + 6, cy, cx, cy - 5, cx, cy + 5, GOLD);
+		rect(cx - 6, cy - 2, 7, 4, GOLD);
+		break;
+	case 3: case 4:     /* delete saves, format: the card with a red mark */
 		image(&tex_card_mc, cx - 16, cy - 19, 28, 37, 0, 0, white);
 		circle(cx + 12, cy + 10, 10, rgba(10, 12, 16, 230));
 		circle(cx + 12, cy + 10, 9, rgba(220, 70, 80, 255));
-		if (t == 2) rect(cx + 7, cy + 9, 10, 3, white);              /* minus: take some away */
+		if (t == 3) rect(cx + 7, cy + 9, 10, 3, white);              /* minus: take some away */
 		else { rect(cx + 11, cy + 4, 3, 8, white); rect(cx + 11, cy + 14, 3, 3, white); }   /* "!": everything goes */
 		break;
-	case 4:             /* network transfer (see net_picture) */
+	case 5:             /* a new virtual card: with a green plus */
+		virtual_card(cx - 16, cy - 19, 28, 37, white);
+		circle(cx + 12, cy - 10, 10, rgba(10, 12, 16, 230));
+		circle(cx + 12, cy - 10, 9, rgba(60, 190, 110, 255));
+		rect(cx + 7, cy - 11.5f, 10, 3, white);
+		rect(cx + 10.5f, cy - 15, 3, 10, white);
+		break;
+	case 6:             /* network transfer (see net_picture) */
 		net_picture(cx, cy);
 		break;
 	default:            /* settings */
@@ -801,22 +824,24 @@ static void tool_picture(int t, float cx, float cy) {
 }
 
 static void tools_screen(void) {
-	static const char *names[UI_TOOLS_COUNT] = { "Back up the whole card", "Restore a whole card", "Delete saves",
-	                                             "Format the card", "Network transfer", "Settings" };
+	static const char *names[UI_TOOLS_COUNT] = { "Back up the whole card", "Restore a whole card", "Copy between cards",
+	                                             "Delete saves", "Format the card", "New virtual card",
+	                                             "Network transfer", "Settings" };
 	static const char *desc[UI_TOOLS_COUNT] = { "One file with everything on it", "From a whole-card backup",
-	                                            "Choose saves to remove", "Erase everything on it",
+	                                            "Card to card, real or virtual", "Choose saves to remove",
+	                                            "Erase everything on it", "A blank card on the SD card",
 	                                            "From a phone or computer", "Picture, updates, exit" };
 	panel(22, 62, 596, 300);
 	text(34, 80, "Card tools", 12, TITLE, 0, 380);
 	rule(32, 92, 576);
 	for (int i = 0; i < UI_TOOLS_COUNT; i++) {
-		float x = 34 + (i % 2) * 290, y = 104 + (i / 2) * 84, w = 282, h = 74;
+		float x = 34 + (i % 2) * 290, y = 100 + (i / 2) * 63, w = 282, h = 57;
 		bool on = i == sc.tools_sel && sc.overlay == UI_OVERLAY_NONE;
 		rect_v(x, y, w, h, rgba(76, 94, 114, on ? 150 : 80), rgba(40, 54, 70, on ? 160 : 90));
 		rect(x + 1, y + 1, w - 2, 1, rgba(255, 255, 255, 30));
 		tool_picture(i, x + 40, y + h / 2);
-		text(x + 80, y + 28, names[i], 14, i == 3 ? rgba(255, 170, 170, 255) : TEXT, 0, w - 90);
-		text(x + 80, y + 48, desc[i], 11, SOFT, 0, w - 90);
+		text(x + 80, y + 21, names[i], 14, i == 4 ? rgba(255, 170, 170, 255) : TEXT, 0, w - 90);
+		text(x + 80, y + 40, desc[i], 11, SOFT, 0, w - 90);
 		if (on) gold_ring(x, y, w, h);
 	}
 }
@@ -1016,9 +1041,34 @@ static void splash_screen(void) {
 	text(320, 440, sc.title_info, 10, alpha(DIM, k), 1, 300);
 }
 
+/* the cards panel: a row for each memory card, real or virtual, with its
+ * picture, its name and a line about it */
+static void cards_panel(void) {
+	float w = 460, rows = sc.orow_count, h = 56 + rows * 42;
+	float x = 320 - w / 2, y = 214 - h / 2;   /* (above the bar along the bottom) */
+	panel(x, y, w, h);
+	text(x + 14, y + 18, sc.overlay_title, 13, TITLE, 0, w - 28);
+	rule(x + 14, y + 30, w - 28);
+	for (int i = 0; i < sc.orow_count; i++) {
+		float ry = y + 40 + i * 42;
+		frost(x + 14, ry, w - 28, 36);
+		const Color white = rgba(255, 255, 255, 255);
+		switch (sc.orow_icon[i]) {
+		case UI_ROW_CARD: image(&tex_card_mc, x + 24, ry + 6, 19, 25, 0, 0, white); break;
+		case UI_ROW_VIRTUAL: virtual_card(x + 24, ry + 6, 19, 25, white); break;
+		case UI_ROW_SD: image(&tex_card_sd, x + 25, ry + 6, 18, 24, 0, 0, white); break;
+		}
+		float tx = sc.orow_icon[i] ? x + 54 : x + 26;
+		text(tx, ry + 12, sc.orows[i].label, 13, TEXT, 0, w - (tx - x) - 24);
+		if (sc.orows[i].value[0] != 1) text(tx, ry + 26, sc.orows[i].value, 10, SOFT, 0, w - (tx - x) - 24);
+		if (i == sc.osel) gold_ring(x + 14, ry, w - 28, 36);
+	}
+}
+
 static void overlay_panel(void) {
 	if (sc.overlay == UI_OVERLAY_NONE) return;
 	rect(vl, vt, vr - vl, vb - vt, rgba(0, 0, 0, 120));
+	if (sc.overlay == UI_OVERLAY_CARDS) { cards_panel(); return; }
 	float w = 360, rows = sc.orow_count, h = 64 + rows * 34;
 	float x = 320 - w / 2, y = 222 - h / 2;
 	panel(x, y, w, h);
@@ -1084,8 +1134,8 @@ static void draw_frame(void) {
 		else if (sc.screen == UI_SETTINGS) settings_screen();
 		else if (sc.screen == UI_TRANSFER) transfer_screen();
 		else main_screen();
-		status_bar();
 		overlay_panel();
+		status_bar();   /* (over a panel's shade: it describes what's in the panel) */
 		hints_row();   /* (over the panel's shade: they're for the panel too) */
 		toast_draw();
 	}

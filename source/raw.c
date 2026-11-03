@@ -24,6 +24,7 @@
 #define ogc_card_write __card_write
 #endif
 #include "card.h"
+#include "vcard.h"
 extern s32 __card_write(s32 chn,u32 address,u32 block_len,void *buffer,cardcallback callback);
 extern s32 __card_sectorerase(s32 chn,u32 sector,cardcallback callback);
 extern s32 __card_sync(s32 chn);
@@ -242,8 +243,41 @@ void time2name(char *name)
 	sprintf(name, "%04d_%02d%s_%02d_%02d-%02d-%02d", year, month, monthstr[month-1], day, hour, min, sec);
 }
 
+/* A whole virtual card: its image file copied (to MCBACKUP, or back over it) */
+static bool copy_whole(const char *from, const char *to, s32 *bytes)
+{
+	FILE *in = fopen(from, "rb");
+	if (!in) return false;
+	FILE *out = fopen(to, "wb");
+	if (!out) { fclose(in); return false; }
+	u8 *buf = malloc(64 * 1024);
+	bool ok = buf != NULL;
+	size_t n;
+	*bytes = 0;
+	while (ok && (n = fread(buf, 1, 64 * 1024, in)) > 0) {
+		if (fwrite(buf, 1, n, out) != n) ok = false;
+		*bytes += n;
+	}
+	free(buf);
+	fclose(in);
+	if (fclose(out) != 0) ok = false;
+	return ok;
+}
+
 s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 {
+	if (SlotIsVirtual(slot))
+	{
+		const VirtualCard *v = VirtualCardGet(slot);
+		char dir[64], to[256], name[64];
+		if (!v) return -1;
+		sprintf(dir, "%s:/%s", fatpath, MCSAVES);
+		mkdir(dir, S_IREAD | S_IWRITE);
+		time2name(name);
+		sprintf(to, "%s/%04db_%s_virtual%c_%s.raw", dir, v->blocks, name, v->letter, v->region);
+		return copy_whole(v->path, to, bytes_writen) ? 1 : -1;
+	}
+
 	int err;
 	char filename[256];
 	char msg[128+256];
@@ -366,6 +400,26 @@ s8 BackupRawImage(s32 slot, s32 *bytes_writen )
 
 s8 RestoreRawImage( s32 slot, char *sdfilename, s32 *bytes_writen )
 {
+	if (SlotIsVirtual(slot))
+	{
+		const VirtualCard *v = VirtualCardGet(slot);
+		char from[256], keep[300];
+		struct stat st;
+		if (!v) return -1;
+		sprintf(from, "%s:/%s/%s", fatpath, currFolder, sdfilename);
+		if (stat(from, &st) != 0 || !vcard_blocks_for_size((long)st.st_size)) {
+			WaitPrompt("That isn't a whole-card image (the size isn't a memory card's).");
+			return -1;
+		}
+		/* via a copy beside it, so a failure leaves the virtual card as it was */
+		snprintf(keep, sizeof(keep), "%s.new", v->path);
+		if (!copy_whole(from, keep, bytes_writen)) { remove(keep); return -1; }
+		remove(v->path);
+		if (rename(keep, v->path) != 0) return -1;
+		VirtualCardsScan();
+		return 1;
+	}
+
 	FILE *dumpFd = 0;
 	char filename[256];
 	char msg[128+256];

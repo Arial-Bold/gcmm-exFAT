@@ -34,6 +34,11 @@ s32 CARD_GetSerialNo(s32 chn,u32 *serial1,u32 *serial2);
 #endif
 
 #include "mcard.h"
+#include "vcard.h"
+#include <dirent.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <ogc/lwp_watchdog.h>
 #include "gci.h"
 #include "freetype.h"
 
@@ -84,6 +89,154 @@ s32 memsize, sectsize;
 
 card_direntry gci;
 
+/****************************************************************************
+ * Virtual memory cards: the card images a Launcher keeps on the SD card
+ * (swiss/saves/MemoryCardA.USA.raw and so on). Slots from VSLOT_BASE on are
+ * these; the card functions below hand them to vcard.c.
+ ***************************************************************************/
+extern char fatpath[4];
+extern syssram* __SYS_LockSram();
+extern u32 __SYS_UnlockSram(u32 write);
+extern syssramex* __SYS_LockSramEx();
+extern u32 __SYS_UnlockSramEx(u32 write);
+
+static VirtualCard vcards[VCARD_MAX];
+static int nvcards;
+
+bool SlotIsVirtual(int slot) { return slot >= VSLOT_BASE; }
+const VirtualCard *VirtualCardGet(int slot)
+{
+	int i = slot - VSLOT_BASE;
+	return (i >= 0 && i < nvcards) ? &vcards[i] : NULL;
+}
+int VirtualCardCount(void) { return nvcards; }
+
+static int cmp_vcard(const void *a, const void *b)
+{
+	const VirtualCard *x = a, *y = b;
+	if (x->letter != y->letter) return x->letter - y->letter;
+	return strcmp(x->region, y->region);
+}
+
+/* What's in swiss/saves: MemoryCardA.USA.raw, MemoryCardB.JPN.raw ... */
+int VirtualCardsScan(void)
+{
+	char dir[64];
+	nvcards = 0;
+	snprintf(dir, sizeof(dir), "%s:/swiss/saves", fatpath);
+	DIR *d = opendir(dir);
+	if (!d) return 0;
+	struct dirent *e;
+	while ((e = readdir(d)) && nvcards < VCARD_MAX) {
+		const char *n = e->d_name;
+		size_t l = strlen(n);
+		if (l < 18 || strncasecmp(n, "MemoryCard", 10) || n[11] != '.' || strcasecmp(n + l - 4, ".raw")) continue;
+		char letter = n[10] & ~0x20;
+		if (letter != 'A' && letter != 'B') continue;
+		VirtualCard *v = &vcards[nvcards];
+		memset(v, 0, sizeof(*v));
+		v->letter = letter;
+		snprintf(v->region, sizeof(v->region), "%.*s", (int)(l - 16) < 7 ? (int)(l - 16) : 7, n + 12);
+		snprintf(v->path, sizeof(v->path), "%s/%s", dir, n);
+		struct stat st;
+		long size = stat(v->path, &st) == 0 ? (long)st.st_size : 0;
+		if (vcard_open(v->path) == VCARD_OK) {
+			v->formatted = true;
+			v->blocks = vcard_blocks();
+			v->saves = vcard_count();
+			v->free = vcard_free();
+		} else {
+			v->blocks = vcard_blocks_for_size(size);
+			if (!v->blocks) v->blocks = 2043;
+		}
+		vcard_close();
+		nvcards++;
+	}
+	closedir(d);
+	qsort(vcards, nvcards, sizeof(vcards[0]), cmp_vcard);
+	return nvcards;
+}
+
+/* "Virtual card A (USA)", or "Memory Card A" for a real one */
+void CardSlotName(int slot, char *out, int cap)
+{
+	const VirtualCard *v = VirtualCardGet(slot);
+	if (v) snprintf(out, cap, "Virtual card %c (%s)", v->letter, v->region);
+	else snprintf(out, cap, "Memory Card %c", slot ? 'B' : 'A');
+}
+
+/* Says why a virtual card couldn't be opened */
+static void v_error(int slot, int r)
+{
+	char name[48], msg[200];
+	CardSlotName(slot, name, sizeof(name));
+	if (r == VCARD_ERR_UNFORMATTED)
+		snprintf(msg, sizeof(msg), "%s isn't formatted yet. A game formats it the first time it's used, or use Format the card in Card tools.", name);
+	else if (r == VCARD_ERR_BROKEN)
+		snprintf(msg, sizeof(msg), "%s is damaged: both copies of its directory or block table are bad.", name);
+	else
+		snprintf(msg, sizeof(msg), "Couldn't read %s on the SD card.", name);
+	WaitPrompt(msg);
+}
+
+static int v_open(int slot, bool say)
+{
+	const VirtualCard *v = VirtualCardGet(slot);
+	int r = v ? vcard_open(v->path) : VCARD_ERR_IO;
+	if (r != VCARD_OK && say) v_error(slot, r);
+	return r;
+}
+
+/* the serial number games such as F-Zero GX and Phantasy Star Online tie their saves to */
+static s32 card_serial(s32 chn, u32 *s1, u32 *s2)
+{
+	if (SlotIsVirtual(chn)) { vcard_serial(s1, s2); return 0; }
+	return CARD_GetSerialNo(chn, s1, s2);
+}
+
+/* Formats a virtual card as this console formats a card in that slot */
+static int v_format(const char *path, char letter, const char *region, int blocks)
+{
+	VCardFormat fm;
+	memset(&fm, 0, sizeof(fm));
+	syssram *sram = __SYS_LockSram();
+	fm.counter_bias = sram->counter_bias;
+	fm.language = sram->lang;
+	__SYS_UnlockSram(0);
+	syssramex *sramex = __SYS_LockSramEx();
+	memcpy(fm.flash_id, sramex->flash_id[letter == 'B' ? 1 : 0], 12);
+	__SYS_UnlockSramEx(0);
+	fm.vi_dtv = *(vu16 *)0xCC00206E;   /* the VI's DTV status, as the card library stores it */
+	fm.time = gettime();
+	fm.encoding = !strcasecmp(region, "JPN") ? 1 : 0;
+	return vcard_format(path, blocks, &fm);
+}
+
+/* A new virtual card (formatted), replacing any there. Returns its slot, or -1. */
+int VirtualCardMake(char letter, const char *region, int blocks)
+{
+	char dir[64], path[128];
+	snprintf(dir, sizeof(dir), "%s:/swiss", fatpath);
+	mkdir(dir, 0777);
+	snprintf(dir, sizeof(dir), "%s:/swiss/saves", fatpath);
+	mkdir(dir, 0777);
+	snprintf(path, sizeof(path), "%s/MemoryCard%c.%s.raw", dir, letter, region);
+	if (v_format(path, letter, region, blocks) != VCARD_OK) return -1;
+	VirtualCardsScan();
+	for (int i = 0; i < nvcards; i++)
+		if (vcards[i].letter == letter && !strcasecmp(vcards[i].region, region)) return VSLOT_BASE + i;
+	return -1;
+}
+
+/* Is the card there? A real one in its slot, or a virtual one that's formatted */
+bool CardSlotPresent(int slot)
+{
+	const VirtualCard *v = VirtualCardGet(slot);
+	if (v) return v->formatted;
+	if (SlotIsVirtual(slot)) return false;
+	return CARD_Probe(slot) > 0;
+}
+
 //The following code is made by Ralf at GSCentral forums (gscentral.org)
 //http://board.gscentral.org/retro-hacking/53093.htm#post188949
 s32 FZEROGX_MakeSaveGameValid(s32 chn);
@@ -115,6 +268,8 @@ int MountCard(int cslot)
 	s32 ret = -1;
 	int tries = 0;
 	int isMounted;
+
+	if (SlotIsVirtual(cslot)) return v_open(cslot, false) == VCARD_OK ? 0 : CARD_ERROR_BROKEN;
 
 	/*** Start the memory card system afresh. libogc2 then waits about 300 ms
 	before it trusts a slot again (any sooner and the card counts as missing:
@@ -153,6 +308,12 @@ u16 FreeBlocks(s32 chn)
 	s32 err;
 	static u8 noinserted = 0;
 	u16 freeblocks = 0;
+	if (SlotIsVirtual(chn)) {
+		if (v_open(chn, true) != VCARD_OK) return 0;
+		freeblocks = vcard_free();
+		vcard_close();
+		return freeblocks;
+	}
 	/*** Try to mount the card ***/
 	err = MountCard(chn);
 	if (err < 0)
@@ -273,6 +434,35 @@ int CardGetDirectory (int slot)
 
 	//add null char
 	company[2] = gamecode[4] = 0;
+
+	if (SlotIsVirtual(slot)) {
+		cardcount = 0;
+		if (v_open(slot, true) != VCARD_OK) { maxfile = 0; return 0; }
+		int n = vcard_count();
+		for (int i = 0; i < n && i < CARD_MAXFILES; i++) {
+			const u8 *ent = vcard_entry(i);
+			card_dir *cd = &CardList[cardcount];
+			memset(cd, 0, sizeof(*cd));
+			cd->chn = slot;
+			cd->fileno = i;
+			cd->filelen = vcard_entry_blocks(i) * 8192;
+			cd->permissions = ent[0x34];
+			memcpy(cd->filename, ent + 8, CARD_FILENAMELEN);
+			memcpy(cd->gamecode, ent, 4);
+			memcpy(cd->company, ent + 4, 2);
+			cd->showall = true;
+			char fname[CARD_FILENAMELEN + 1] = { 0 };
+			memcpy(fname, ent + 8, CARD_FILENAMELEN);
+			memcpy(company, ent + 4, 2);
+			memcpy(gamecode, ent, 4);
+			memset(filelist[cardcount], 0, 1024);
+			sprintf((char*)filelist[cardcount], "%s-%s-%s", company, gamecode, fname);
+			cardcount++;
+		}
+		vcard_close();
+		maxfile = cardcount;
+		return cardcount;
+	}
 
 	/*** Clear the work area ***/
 	memset (SysArea, 0, CARD_WORKAREA);
@@ -480,6 +670,26 @@ static u32 icon_data_end(void)
 bool CardReadSummaries(int slot, void (*done)(int id, bool ok, void *ctx), void *ctx)
 {
 	u32 SectorSize = 8192;
+	if (SlotIsVirtual(slot)) {
+		if (v_open(slot, true) != VCARD_OK) return false;
+		for (int id = 0; id < cardcount; id++)
+		{
+			memset (CommentBuffer, 0, 64);
+			lastframe = numicons = 0;
+			const u8 *ent = vcard_entry(id);
+			if (!ent) { done(id, false, ctx); continue; }
+			memcpy(&gci, ent, sizeof(card_direntry));
+			memcpy(FileBuffer, &gci, sizeof(card_direntry));
+			u32 want = icon_data_end(), most = vcard_entry_blocks(id) * 8192;
+			if (want > most) want = most;
+			if (want > MAXFILEBUFFER - MCDATAOFFSET) want = MAXFILEBUFFER - MCDATAOFFSET;
+			bool ok = vcard_read(id, FileBuffer + MCDATAOFFSET, want) == VCARD_OK;
+			if (ok) parse_icon_data();
+			done(id, ok, ctx);
+		}
+		vcard_close();
+		return true;
+	}
 	int err = MountCard(slot);
 	if (err < 0)
 	{
@@ -549,6 +759,21 @@ int CardReadFileHeader (int slot, int id)
 
 	memcpy (company, &CardList[id].company, 2);
 	memcpy (gamecode, &CardList[id].gamecode, 4);
+
+	if (SlotIsVirtual(slot))
+	{
+		/*** a virtual card: the save straight from its blocks ***/
+		if (v_open(slot, true) != VCARD_OK) return 0;
+		const u8 *ent = vcard_entry(id);
+		filesize = vcard_entry_blocks(id) * 8192;
+		if (!ent || filesize + MCDATAOFFSET > MAXFILEBUFFER) { vcard_close(); WaitPrompt("Couldn't read that save."); return 0; }
+		memcpy(&gci, ent, sizeof(card_direntry));
+		memcpy(FileBuffer, &gci, sizeof(card_direntry));
+		if (vcard_read(id, FileBuffer + MCDATAOFFSET, filesize) != VCARD_OK) { vcard_close(); WaitPrompt("Couldn't read that save."); return 0; }
+		vcard_close();
+		parse_icon_data();
+		return filesize + MCDATAOFFSET;
+	}
 
 	/*** Mount the card ***/
 	err = MountCard(slot);
@@ -642,6 +867,21 @@ int CardReadFile (int slot, int id)
 	memcpy (company, &CardList[id].company, 2);
 	memcpy (gamecode, &CardList[id].gamecode, 4);
 
+	if (SlotIsVirtual(slot))
+	{
+		/*** a virtual card: the save straight from its blocks ***/
+		if (v_open(slot, true) != VCARD_OK) return 0;
+		const u8 *ent = vcard_entry(id);
+		filesize = vcard_entry_blocks(id) * 8192;
+		if (!ent || filesize + MCDATAOFFSET > MAXFILEBUFFER) { vcard_close(); WaitPrompt("Couldn't read that save."); return 0; }
+		memcpy(&gci, ent, sizeof(card_direntry));
+		memcpy(FileBuffer, &gci, sizeof(card_direntry));
+		if (vcard_read(id, FileBuffer + MCDATAOFFSET, filesize) != VCARD_OK) { vcard_close(); WaitPrompt("Couldn't read that save."); return 0; }
+		vcard_close();
+		
+		return filesize + MCDATAOFFSET;
+	}
+
 	/*** Mount the card ***/
 	err = MountCard(slot);
 	if (err < 0)
@@ -726,6 +966,46 @@ int CardWriteFile (int slot)
 	memcpy(gamecode, &gci.gamecode, 4);
 	memcpy(filename, &gci.filename, CARD_FILENAMELEN);
 	filelen = gci.length * 8192;
+
+	if (SlotIsVirtual(slot))
+	{
+		/*** a virtual card: replace what's there if asked, then write it whole ***/
+		char name[48];
+		CardSlotName(slot, name, sizeof(name));
+		if (v_open(slot, true) != VCARD_OK) return 0;
+		int there = vcard_find(gci.gamecode, gci.company, filename);
+		if (there >= 0)
+		{
+			if (card_replace == REPLACE_YES) ret = 0;
+			else if (card_replace == REPLACE_NO) ret = 1;
+			else {
+				sprintf(txt, "%s is already on %s. Replace it?", (char *)filename, name);
+				ret = WaitPromptChoice(txt, "Replace", "Cancel");
+				if (!ret) {
+					sprintf(txt, "Sure? The copy on %s will be lost.", name);
+					ret = WaitPromptChoiceAZ(txt, "Replace", "Cancel");
+				}
+			}
+			if (ret) {
+				vcard_close();
+				if (card_replace == REPLACE_ASK) WaitPrompt("Left the save on the card as it was.");
+				return 0;
+			}
+			if (vcard_delete(there) != VCARD_OK) { vcard_close(); WaitPrompt("Couldn't replace the save on the virtual card."); return 0; }
+		}
+		FZEROGX_MakeSaveGameValid(slot);
+		PSO_MakeSaveGameValid(slot);
+		u8 entry[64];
+		memcpy(entry, &gci, 64);
+		int r = vcard_write(entry, FileBuffer + MCDATAOFFSET + OFFSET, gci.length);
+		OFFSET = 0;
+		vcard_close();
+		if (r == VCARD_ERR_NOSPACE) sprintf(txt, "There isn't room on %s for %s (%d blocks).", name, (char *)filename, gci.length);
+		else if (r == VCARD_ERR_NOENTRY) sprintf(txt, "%s already holds 127 saves, as many as a card can.", name);
+		else if (r != VCARD_OK) sprintf(txt, "Couldn't write %s to %s.", (char *)filename, name);
+		if (r != VCARD_OK) { WaitPrompt(txt); return 0; }
+		return 1;
+	}
 
 	/*** Mount the card ***/
 	err = MountCard(slot);
@@ -925,6 +1205,14 @@ void WaitCardError(char *src, int error)
  ***************************************************************************/
 bool CardDeleteSave(int slot, int id)
 {
+	if (SlotIsVirtual(slot))
+	{
+		if (v_open(slot, true) != VCARD_OK) return false;
+		bool ok = vcard_delete(id) == VCARD_OK;
+		vcard_close();
+		if (!ok) WaitPrompt("Couldn't delete the save from the virtual card.");
+		return ok;
+	}
 	int err = MountCard(slot);
 	if (err < 0)
 	{
@@ -949,6 +1237,26 @@ void MC_FormatMode(s32 slot)
 {
 	int erase = 1;
 	int err;
+
+	if (SlotIsVirtual(slot))
+	{
+		const VirtualCard *v = VirtualCardGet(slot);
+		char name[48], msg[160];
+		if (!v) return;
+		CardSlotName(slot, name, sizeof(name));
+		snprintf(msg, sizeof(msg), "Format %s? Everything on it will be erased.", name);
+		if (WaitPromptChoice(msg, "Cancel", "Format") != 1) return;
+		snprintf(msg, sizeof(msg), "Sure? All the saves on %s will be lost.", name);
+		if (WaitPromptChoiceAZ(msg, "Format", "Cancel") != 0) return;   /* (Z formats) */
+		ShowAction("Formatting\x85");
+		char path[300], region[8];
+		snprintf(path, sizeof(path), "%s", v->path);
+		snprintf(region, sizeof(region), "%s", v->region);
+		bool ok = v_format(path, v->letter, region, v->blocks) == VCARD_OK;
+		VirtualCardsScan();
+		WaitPrompt(ok ? "Formatted. The virtual card is empty and ready." : "Couldn't format the virtual card.");
+		return;
+	}
 
 	//0 = B wass pressed -> ask again
 	if (!slot){
@@ -1021,7 +1329,7 @@ s32 FZEROGX_MakeSaveGameValid(s32 chn)
 	u16 chksum = 0xFFFF;
 
 	if(strcasecmp(&FileBuffer[0x08],"f_zero.dat")!=0) return CARD_ERROR_READY;		// check for F-Zero GX system file
-	if((ret=CARD_GetSerialNo(chn,&serial1,&serial2))<0) return ret;			// get encrypted destination memory card serial numbers
+	if((ret=card_serial(chn,&serial1,&serial2))<0) return ret;			// get encrypted destination memory card serial numbers
 
 	*(u16*)&FileBuffer[0x2066+MCDATAOFFSET] = serial1 >> 16;			// set new serial numbers
 	*(u16*)&FileBuffer[0x7580+MCDATAOFFSET] = serial2 >> 16;
@@ -1071,7 +1379,7 @@ s32 PSO_MakeSaveGameValid(s32 chn)
 
 	return CARD_ERROR_READY;							// nothing to do
 exit:
-	if((ret=CARD_GetSerialNo(chn,&serial1,&serial2))<0) return ret;			// get encrypted destination memory card serial numbers
+	if((ret=card_serial(chn,&serial1,&serial2))<0) return ret;			// get encrypted destination memory card serial numbers
 
 	*(u32*)&FileBuffer[0x2158+MCDATAOFFSET] = serial1;				// set new serial numbers
 	*(u32*)&FileBuffer[0x215C+MCDATAOFFSET] = serial2;

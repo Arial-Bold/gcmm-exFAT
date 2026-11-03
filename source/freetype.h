@@ -19,6 +19,8 @@ void writeStatusBar (char *line1, char *line2);
 
 int SelectMode ();
 int ChooseDevice (const u8 *devices, int count);
+int ChooseCard (const char *title, int exclude, bool always);   /* a memory card, real or virtual: its slot, or -1 */
+void NewVirtualCard (void);
 const char *DeviceName (int dev);
 void UpdateTitleInfo (void);
 void UpdateSDInfo (void);
