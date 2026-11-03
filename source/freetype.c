@@ -104,6 +104,21 @@ static void read_pad(void)
 	/* the menu sounds: A chooses, B goes back, the other buttons do something */
 	if (pad_down & PAD_BUTTON_B) sound_play(SFX_BACK);
 	else if (pad_down & (PAD_BUTTON_A | PAD_BUTTON_X | PAD_BUTTON_Y | PAD_TRIGGER_Z | PAD_BUTTON_START)) sound_play(SFX_SELECT);
+	/* the easter egg: Y twenty times in a row (anywhere Y isn't used) makes
+	 * the virtual memory cards Swiss cheese until GCMM exFAT closes */
+	static int y_presses;
+	static u64 y_last;
+	if ((pad_down & PAD_BUTTON_Y) && ui_get_screen() != UI_LIST) {
+		u64 now = ticks_to_millisecs(gettime());
+		if (now - y_last > 1500) y_presses = 0;
+		y_last = now;
+		if (++y_presses == 20) {
+			y_presses = 0;
+			ui_cheese(!ui_cheese_on());
+			ui_toast(ui_cheese_on() ? "Say cheese!" : "Back to plain plastic");
+			sound_play(SFX_CONFIRM);
+		}
+	}
 }
 
 /* + Control Pad with repeat: a press, then again every few frames while held */
@@ -530,8 +545,8 @@ void NewVirtualCard(void)
 
 /* The Settings page: the picture, then Update from GitHub and Exit to
  * Launcher. Returns 500 for Exit to Launcher, otherwise 0. */
-#define SET_ROWS 8
-enum { SET_RES, SET_SCREEN, SET_WIDTH, SET_OVERSCAN, SET_SOUNDS, SET_LAUNCHER, SET_UPDATE, SET_EXIT };
+#define SET_ROWS 9
+enum { SET_RES, SET_SCREEN, SET_WIDTH, SET_OVERSCAN, SET_SOUNDS, SET_INTRO, SET_LAUNCHER, SET_UPDATE, SET_EXIT };
 int launcher_list(char (*names)[64], int max);   /* main.c */
 const char *launcher_current(void);
 
@@ -548,6 +563,7 @@ static void settings_rows(void)
 	ui_overlay_row(SET_WIDTH, "Picture width", ui_set.full_width ? "Full" : "Standard");
 	ui_overlay_row(SET_OVERSCAN, "Overscan", ov);
 	ui_overlay_row(SET_SOUNDS, "Menu sounds", vol);
+	ui_overlay_row(SET_INTRO, "Opening", ui_set.intro ? "On" : "Off");
 	ui_overlay_row(SET_LAUNCHER, "Launcher", lau);
 	ui_overlay_row(SET_UPDATE, "Update from GitHub", ver);
 	ui_overlay_row(SET_EXIT, "Exit to Launcher", NULL);
@@ -562,6 +578,7 @@ static void settings_help(int row)
 		{ "Picture width", "Full fills the width of the TV picture. Standard leaves a border." },
 		{ "Overscan", "Pulls everything in from the edges if your TV cuts them off." },
 		{ "Menu sounds", "How loud the sounds are when you move and choose. Off for none." },
+		{ "Opening", "The logo animation and its sound when GCMM exFAT starts." },
 		{ "Launcher", "The program at the root of the SD card that Exit to Launcher starts." },
 		{ "Update from GitHub", "Looks for a newer GCMM exFAT. Needs a network adapter." },
 		{ "Exit to Launcher", "Leaves GCMM exFAT." },
@@ -650,6 +667,7 @@ static int SettingsMenu(void)
 			}
 			case SET_SCREEN: ui_set.widescreen ^= 1; ui_settings_changed(); break;
 			case SET_WIDTH: ui_set.full_width ^= 1; ui_settings_changed(); break;
+			case SET_INTRO: ui_set.intro ^= 1; break;
 			case SET_OVERSCAN:
 				/* A goes round from the most back to Off */
 				ui_set.overscan += d;

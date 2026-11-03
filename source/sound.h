@@ -8,4 +8,5 @@ void sound_init(void);
 void sound_play(Sfx s);
 /* The sound has been made (they're made in the background at start-up). */
 bool sound_loaded(Sfx s);
+void sound_stop(Sfx s);      /* stops it if it's still playing */
 void sound_shutdown(void);   /* before launching another program */

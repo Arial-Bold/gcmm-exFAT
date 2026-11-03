@@ -36,6 +36,7 @@ static void synth(int id) {
 /* The sounds are made on a thread of their own while the splash screen
  * shows, the ones used most first. */
 static const Sfx synth_order[] = {
+	SFX_INTRO,   /* (quick: it's unpacked, not made) */
 	SFX_HOVER, SFX_HOVER2, SFX_HOVER3, SFX_SELECT, SFX_BACK, SFX_CONFIRM, SFX_CANCEL, SFX_ERROR,
 };
 static thr_t synth_th;
@@ -62,6 +63,7 @@ static void sfx_cb(AESNDPB *pb, u32 st) {
 #define SFX_VOICES 6
 static AESNDPB *sfx_voice[SFX_VOICES];
 static u64 sfx_busy_until[SFX_VOICES];
+static Sfx sfx_what[SFX_VOICES];   /* the sound each voice played last */
 static int sfx_next;
 
 void sound_init(void) {
@@ -99,4 +101,15 @@ void sound_play(Sfx s) {
 	AESND_SetVoiceVolume(sfx_voice[v], vol, vol);
 	AESND_PlayVoice(sfx_voice[v], VOICE_MONO16, buffers[s], sizes[s], RATE, 0, false);
 	sfx_busy_until[v] = now + millisecs_to_ticks((sizes[s] / 2) * 1000 / RATE + 30);
+	sfx_what[v] = s;
+}
+
+void sound_stop(Sfx s) {
+	if (!ready) return;
+	u64 now = gettime();
+	for (int i = 0; i < SFX_VOICES; i++)
+		if (sfx_voice[i] && sfx_what[i] == s && now < sfx_busy_until[i]) {
+			AESND_SetVoiceStop(sfx_voice[i], true);
+			sfx_busy_until[i] = now;
+		}
 }

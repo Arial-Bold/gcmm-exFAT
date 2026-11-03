@@ -17,6 +17,7 @@ typedef enum {
     SFX_OPEN,         /* opening a side of the cube */
     SFX_START,        /* the menu appearing after the opening */
     SFX_CLOSE, SFX_ERROR, SFX_KEY, SFX_LOADED,
+    SFX_INTRO,        /* the opening's sound (a clip made beforehand, see intro_clip.h) */
     SFX_COUNT
 } Sfx;
 

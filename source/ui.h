@@ -26,6 +26,7 @@ typedef struct {
 	int overscan;     /* percent, 0..UI_OVERSCAN_MAX */
 	int sound_volume; /* menu sounds, 0 (off)..UI_VOLUME_MAX */
 	char launcher[64];/* the .dol at the root of the SD card that Exit starts ("" = find one) */
+	int intro;        /* 1 = the opening plays at start-up */
 } UiSettings;
 #define UI_VOLUME_MAX 10
 
@@ -54,7 +55,7 @@ enum { UI_ROW_NONE, UI_ROW_CARD, UI_ROW_VIRTUAL, UI_ROW_SD };
 void ui_overlay_row_icon(int row, int icon);
 
 #define UI_LIST_ROWS 8
-#define UI_OVERLAY_ROWS 8
+#define UI_OVERLAY_ROWS 9
 
 void ui_screen(int screen);
 int  ui_get_screen(void);
@@ -69,6 +70,17 @@ void ui_progress(float f);                              /* a bar in the descript
 void ui_hints(const char *const *hints, int n);
 /* a message across the top that fades after a few seconds ("Press B again to exit") */
 void ui_toast(const char *msg);
+
+/* The opening: the logo flips over and goes into a slot, then the screen
+ * comes up (about 7 seconds; the sound is SFX_INTRO, started alongside).
+ * The screen set with ui_screen shows at its end. */
+void ui_intro_start(void);
+bool ui_intro_playing(void);
+void ui_intro_skip(void);   /* straight on to the screen coming up */
+
+/* The easter egg: virtual memory cards made of Swiss cheese (until GCMM exFAT closes) */
+void ui_cheese(bool on);
+bool ui_cheese_on(void);
 
 /* the Network transfer page: the QR code (size x size modules, 1 = dark;
  * size 0 = none yet), the address, a line about the network, and the files

@@ -777,6 +777,21 @@ static void CopyBetweenCards(void)
 	WaitPrompt(buffer);
 }
 
+/* Waits for the opening to finish; A or START skips it. */
+static void intro_wait(void)
+{
+	bool skipped = false;
+	while (ui_intro_playing()) {
+		VIDEO_WaitVSync();
+		if (!skipped && (PAD_ButtonsDown(0) & (PAD_BUTTON_A | PAD_BUTTON_START))) {
+			skipped = true;
+			ui_intro_skip();
+			sound_stop(SFX_INTRO);
+		}
+	}
+	while (PAD_ButtonsHeld(0) & (PAD_BUTTON_A | PAD_BUTTON_START)) VIDEO_WaitVSync();   /* (not taken as a choice too) */
+}
+
 /****************************************************************************
 * Main
 ****************************************************************************/
@@ -832,13 +847,22 @@ int main (int argc, char *argv[])
 		find_settings(argc, argv);
 		ui_settings_load();
 	}
-	ui_splash_ready();
-	ui_splash_text("Looking for saves\x85");
-	u64 splash_start = ticks_to_millisecs(gettime());
-	while (ticks_to_millisecs(gettime()) - splash_start < 1500) VIDEO_WaitVSync();   /* let the logo settle */
-	ui_screen(UI_MAIN);
+	if (ui_set.intro) {
+		/* the opening (its sound is unpacked in the background: wait a moment for it) */
+		for (int k = 0; k < 30 && !sound_loaded(SFX_INTRO); k++) VIDEO_WaitVSync();
+		sound_play(SFX_INTRO);
+		ui_intro_start();
+	} else {
+		ui_splash_ready();
+		ui_splash_text("Looking for saves\x85");
+		u64 splash_start = ticks_to_millisecs(gettime());
+		while (ticks_to_millisecs(gettime()) - splash_start < 1500) VIDEO_WaitVSync();   /* let the logo settle */
+	}
+	ui_screen(UI_MAIN);   /* (with the opening, it comes up at its end) */
 	ui_main_select(-1);
 	UpdateTitleInfo();
+	/* choosing an adapter waits for the opening to finish */
+	if (!have_sd && CUR_DEVICE == 0) intro_wait();
 
 	//Several adapters: choose one (and its settings then)
 	if (!have_sd && CUR_DEVICE == 0) {
@@ -850,6 +874,7 @@ int main (int argc, char *argv[])
 	skip_selector = 0;
 	if (have_sd) update_remove_old();   /* the version an update replaced */
 	MainSummaryRefresh();
+	intro_wait();   /* (the saves are counted while it plays) */
 
 	for (;;)
 	{

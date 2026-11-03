@@ -23,7 +23,7 @@
 
 /* ================================================================ settings */
 
-UiSettings ui_set = { UI_RES_AUTO, 0, 1, 0, 4, "" };
+UiSettings ui_set = { UI_RES_AUTO, 0, 1, 0, 4, "", 1 };
 static char settings_file[300], settings_old[300];
 
 void ui_settings_path(const char *path, const char *old_path) {
@@ -57,6 +57,7 @@ void ui_settings_load(void) {
 		else if (!strcmp(line, "display.full_width")) ui_set.full_width = v ? 1 : 0;
 		else if (!strcmp(line, "display.overscan")) ui_set.overscan = v < 0 ? 0 : v > UI_OVERSCAN_MAX ? UI_OVERSCAN_MAX : v;
 		else if (!strcmp(line, "sound.volume")) ui_set.sound_volume = v < 0 ? 0 : v > UI_VOLUME_MAX ? UI_VOLUME_MAX : v;
+		else if (!strcmp(line, "intro.play")) ui_set.intro = v ? 1 : 0;
 		else if (!strcmp(line, "exit.launcher")) snprintf(ui_set.launcher, sizeof(ui_set.launcher), "%s", eq + 1);
 	}
 	fclose(f);
@@ -78,6 +79,7 @@ bool ui_settings_save(void) {
 	ok = fprintf(f, "display.full_width=%d\n", ui_set.full_width) > 0 && ok;
 	ok = fprintf(f, "display.overscan=%d\n", ui_set.overscan) > 0 && ok;
 	ok = fprintf(f, "sound.volume=%d\n", ui_set.sound_volume) > 0 && ok;
+	ok = fprintf(f, "intro.play=%d\n", ui_set.intro) > 0 && ok;
 	ok = fprintf(f, "exit.launcher=%s\n", ui_set.launcher) > 0 && ok;
 	ok = fflush(f) == 0 && ok;
 	fsync(fileno(f));   /* straight onto the card, not left waiting in a cache */
@@ -437,6 +439,8 @@ static void shadow(float x, float y, float w, float h, float r, float spread, Co
 /* ---------------------------------------------------------- textures */
 
 static GXTexObj tex_font_small, tex_font_large, tex_logo_title, tex_logo_splash, tex_card_mc, tex_card_sd, tex_card_file, tex_icon[UI_LIST_ROWS];
+static GXTexObj tex_card_cheese, tex_intro_card, tex_intro_words;
+static bool cheese;   /* the easter egg */
 
 static void tex_init(GXTexObj *t, const void *data, int w, int h, u8 fmt) {
 	DCFlushRange((void *)data, GX_GetTexBufferSize(w, h, fmt, GX_FALSE, 0));
@@ -562,10 +566,11 @@ static void mesh(int cols, int rows, const float *xy, const Color *c) {
 	}
 }
 
+static float bd_k = 1;   /* how much of the backdrop shows (the opening fades it in) */
 static void backdrop(void) {
 	float fx = vl, fy = vt, fw = vr - vl, fh = vb - vt;
-	rect(fx, fy, fw, fh, rgba(6, 6, 8, 255));
-	Color line = rgba(0x25, 0x25, 0x2b, 255);
+	rect(fx, fy, fw, fh, rgba(6, 6, 8, (u8)(255 * bd_k)));
+	Color line = rgba(0x25, 0x25, 0x2b, (u8)(255 * bd_k));
 	float cx = 320, cy = 240;
 	float x0 = cx - 24 * ceilf((cx - fx) / 24), y0 = cy - 24 * ceilf((cy - fy) / 24);
 	for (float x = x0; x < fx + fw; x += 24) rect(x, fy, 2, fh, line);
@@ -581,7 +586,7 @@ static void backdrop(void) {
 			float dx = (x - (fx + fw / 2)) / (fw / 2 * 1.414f), dy = (y - (fy + fh / 2)) / (fh / 2 * 1.414f);
 			float d = sqrtf(dx * dx + dy * dy);
 			float v = d < 0.4f ? 0 : (d - 0.4f) / 0.6f * 0.6f;
-			col[k] = rgba(0, 0, 0, (u8)(clamp01(v) * 255));
+			col[k] = rgba(0, 0, 0, (u8)(clamp01(v) * 255 * bd_k));
 		}
 	mesh(C, R, xy, col);
 }
@@ -777,7 +782,7 @@ static void net_picture(float cx, float cy) {
 /* a virtual memory card (a card image on the SD card): the memory card
  * with a little SD card tucked at its lower right */
 static void virtual_card(float x, float y, float w, float h, Color tint) {
-	image(&tex_card_mc, x, y, w, h, 0, 0, tint);
+	image(cheese ? &tex_card_cheese : &tex_card_mc, x, y, w, h, 0, 0, tint);
 	float sw = w * 0.42f, sh = h * 0.42f;
 	image(&tex_card_sd, x + w - sw * 0.75f, y + h - sh * 0.95f, sw, sh, 0, 0, tint);
 }
@@ -906,8 +911,8 @@ static void settings_screen(void) {
 	text(34, 80, "Settings", 12, TITLE, 0, 380);
 	rule(32, 92, 576);
 	for (int i = 0; i < sc.orow_count; i++) {
-		/* three groups: the picture, sounds and Launcher, then update and exit */
-		float x = 34, y = 100 + i * 31 + (i >= 4 ? 6 : 0) + (i >= 6 ? 6 : 0), w = 566, h = 27, cy = y + h / 2;
+		/* three groups: the picture; sounds, the opening and Launcher; then update and exit */
+		float x = 34, y = 100 + i * 27 + (i >= 4 ? 6 : 0) + (i >= 7 ? 6 : 0), w = 566, h = 24, cy = y + h / 2;
 		bool on = i == sc.osel;
 		rect_v(x, y, w, h, rgba(76, 94, 114, on ? 150 : 80), rgba(40, 54, 70, on ? 160 : 90));
 		rect(x + 1, y + 1, w - 2, 1, rgba(255, 255, 255, 30));
@@ -1120,9 +1125,205 @@ static void frame_setup(void) {
 	cur_mode = M_NONE;
 }
 
+/* ============================================================ the opening
+ * The logo, with MEMORY MANAGER under it, centred on black. The words fold
+ * into a thin slot; the slot rises to the middle of the screen (the horizon)
+ * as the logo lifts; the logo back-flips end over end, coming closer, and
+ * lands below the slot tipped back; it lies down and slides away into the
+ * slot. A click and a flash, the slot shrinks away, the grid fades in, then
+ * the screen. Timed to SFX_INTRO (tools/sound/gcmm_haze.py). */
+
+static bool intro_on;
+static u32 intro_at;
+
+void ui_intro_start(void) { L(); intro_on = true; intro_at = now_ms(); U(); }
+bool ui_intro_playing(void) { return intro_on; }
+void ui_intro_skip(void) {
+	L();
+	if (intro_on && now_ms() - intro_at < 6200) intro_at = now_ms() - 6200;
+	U();
+}
+void ui_cheese(bool on) { cheese = on; }
+bool ui_cheese_on(void) { return cheese; }
+
+#define IN_SLOT_Y 240.0f    /* the slot, once it's the horizon */
+#define IN_SLOT_W 330.0f
+#define IN_TOP_Y 140.0f     /* where the logo lifts to */
+#define IN_CARD_Y 335.0f    /* where it waits, below the horizon */
+#define IN_CY ((480 - (INTRO_CARD_H + 18 + INTRO_WORDS_H)) / 2 + INTRO_CARD_H / 2.0f)   /* the logo and the words, centred */
+#define IN_WORDS_Y (IN_CY + INTRO_CARD_H / 2.0f + 18)
+static const Color LILAC = { 150, 138, 255, 255 };
+
+static float seg(float t, float a, float b) { return clamp01((t - a) / (b - a)); }
+static float ease(float x) { return x * x * (3 - 2 * x); }
+static float lerpf(float a, float b, float k) { return a + (b - a) * k; }
+
+/* a point of the card, for drawing it in pieces (and cutting it at the slot) */
+typedef struct { float x, y, s, t; Color c; } IVtx;
+
+static void ivtx(const IVtx *v) { vtx(v->x, v->y, v->c, v->s, v->t); }
+
+/* a piece of the card, with anything above clip_y cut away (clip_y < 0: none) */
+static void intro_piece(const IVtx *q, float clip_y) {
+	IVtx out[6];
+	int n = 0;
+	if (clip_y < 0) { for (int i = 0; i < 4; i++) out[n++] = q[i]; }
+	else {
+		for (int i = 0; i < 4; i++) {
+			const IVtx *a = &q[i], *b = &q[(i + 1) % 4];
+			bool ain = a->y >= clip_y, bin = b->y >= clip_y;
+			if (ain) out[n++] = *a;
+			if (ain != bin) {
+				float k = (clip_y - a->y) / (b->y - a->y);
+				IVtx m = { lerpf(a->x, b->x, k), clip_y, lerpf(a->s, b->s, k), lerpf(a->t, b->t, k), mix(a->c, b->c, k) };
+				out[n++] = m;
+			}
+		}
+	}
+	if (n < 3) return;
+	GX_Begin(GX_TRIANGLEFAN, GX_VTXFMT0, n);
+	for (int i = 0; i < n; i++) ivtx(&out[i]);
+	GX_End();
+}
+
+/* the rainbow sheen across the card at a point of it (u, v 0..1), as in the mock-ups */
+static Color sheen_at(float u, float v, float pos) {
+	float W = INTRO_CARD_W, H = INTRO_CARD_H;
+	float d = (u * W + 0.6f * v * H) / (W + 0.6f * H) - pos;
+	float band = expf(-(d / 0.1f) * (d / 0.1f));
+	float hue = d * 3 + pos;
+	hue -= floorf(hue);
+	float r = 0.5f + 0.5f * cosf(6.2831853f * hue), g = 0.5f + 0.5f * cosf(6.2831853f * (hue + 1 / 3.0f)),
+	      b = 0.5f + 0.5f * cosf(6.2831853f * (hue + 2 / 3.0f));
+	return rgba((u8)(r * 255), (u8)(g * 255), (u8)(b * 255), (u8)(band * 0.55f * 255));
+}
+
+/* The card, turned about its middle (pitch 0: face on; pi/2: edge on, top
+ * away; pi: its back), seen from 560 units away, scaled and centred on cx, cy. */
+static void intro_card(float cx, float cy, float pitch, float scale, float shine, float clip_y) {
+	enum { NX = 16, NY = 8 };
+	float w = INTRO_CARD_W * scale / 2, h = INTRO_CARD_H * scale / 2;
+	float cp = cosf(pitch), sp = sinf(pitch), F = 560;
+	static float px[(NX + 1) * (NY + 1)], py[(NX + 1) * (NY + 1)];
+	for (int j = 0; j <= NY; j++)
+		for (int i = 0; i <= NX; i++) {
+			float x = (2.0f * i / NX - 1) * w, y = (2.0f * j / NY - 1) * h;
+			float k = F / (F + y * sp);
+			px[j * (NX + 1) + i] = cx + x * k;
+			py[j * (NX + 1) + i] = cy + y * cp * k;
+		}
+	/* how big it looks: edge on, it's a thin bright line */
+	float x0 = px[0], x1 = px[NX], x2 = px[NY * (NX + 1) + NX], x3 = px[NY * (NX + 1)];
+	float y0 = py[0], y1 = py[NX], y2 = py[NY * (NX + 1) + NX], y3 = py[NY * (NX + 1)];
+	float area = ((x0 * y1 - x1 * y0) + (x1 * y2 - x2 * y1) + (x2 * y3 - x3 * y2) + (x3 * y0 - x0 * y3)) / 2;
+	if (fabsf(area) < 40) {
+		float top = fminf(y0, y3) - 1, bot = fmaxf(y0, y3) + 1;
+		if (clip_y >= 0 && top < clip_y) top = clip_y;
+		if (bot > top) rect(fminf(x0, x3), top, fmaxf(x1, x2) - fminf(x0, x3), bot - top, rgba(205, 200, 255, 255));
+		return;
+	}
+	bool back = area < 0;
+	float light = 0.6f + 0.4f * fabsf(cp);   /* darker as it turns from the light */
+	for (int pass = 0; pass < 2; pass++) {
+		/* the face (the back: the card's shape in indigo), then the sheen over it */
+		mode_tex(&tex_intro_card, back || pass == 1);
+		for (int j = 0; j < NY; j++)
+			for (int i = 0; i < NX; i++) {
+				IVtx q[4];
+				static const int di[4] = { 0, 1, 1, 0 }, dj[4] = { 0, 0, 1, 1 };
+				for (int c = 0; c < 4; c++) {
+					int ii = i + di[c], jj = j + dj[c], k = jj * (NX + 1) + ii;
+					float u = (float)ii / NX, v = (float)jj / NY;
+					float tv = back ? 1 - v : v;   /* the back, the right way up */
+					Color col;
+					if (pass == 1) col = sheen_at(u, tv, shine);
+					else if (back) {
+						Color g = mix(rgba(70, 60, 180, 255), rgba(30, 24, 110, 255), tv);
+						col = rgba((u8)(g.r * light), (u8)(g.g * light), (u8)(g.b * light), 255);
+					} else col = rgba((u8)(255 * light), (u8)(255 * light), (u8)(255 * light), 255);
+					q[c] = (IVtx){ px[k], py[k], u, tv, col };
+				}
+				intro_piece(q, clip_y);
+			}
+	}
+}
+
+/* the slot: a thin dark groove with a lilac edge; lit, it glows */
+static void intro_slot(float y, float hw, float a, float lit) {
+	if (hw < 1 || a <= 0) return;
+	for (int g = 4; g >= 1; g--) {   /* the glow */
+		float e = g * (2 + 3 * lit);
+		rrect_v(320 - hw - e, y - 3 - e, 2 * hw + 2 * e, 6 + 2 * e, 3 + e, alpha(LILAC, a * (0.05f + 0.12f * lit) / g), alpha(LILAC, a * (0.05f + 0.12f * lit) / g));
+	}
+	rrect_v(320 - hw, y - 3, 2 * hw, 6, 3, rgba(26, 20, 80, (u8)(255 * a)), rgba(26, 20, 80, (u8)(255 * a)));
+	outline(320 - hw, y - 3, 2 * hw, 6, 3, 1, alpha(LILAC, a));
+	if (hw > 10) rect(320 - hw + 5, y - 1, 2 * hw - 10, 2, rgba(6, 4, 24, (u8)(255 * a)));
+	if (lit > 0 && hw > 8) rect(320 - hw + 4, y - 1, 2 * hw - 8, 2, rgba(230, 225, 255, (u8)(255 * a * lit)));
+}
+
+/* the opening, t seconds in, up to the screen coming up (6.2 s) */
+static void intro_draw(float t) {
+	rect(vl, vt, vr - vl, vb - vt, rgba(0, 0, 0, 255));
+	float kg = ease(seg(t, 5.4f, 6.2f));
+	if (kg > 0) { bd_k = kg; backdrop(); bd_k = 1; }
+
+	/* MEMORY MANAGER folds into the slot (1.4 - 2.3): flat and thin, lilac */
+	float km = seg(t, 1.4f, 2.3f);
+	if (km < 1) {
+		float e = ease(km);
+		float w = lerpf(INTRO_WORDS_W, IN_SLOT_W, e), h = fmaxf(2, lerpf(INTRO_WORDS_H, 6, ease(clamp01(km * 1.3f))));
+		Color c = mix(rgba(255, 255, 255, 255), LILAC, e);
+		c.a = (u8)(255 * (1 - ease(seg(km, 0.75f, 1))));
+		image(&tex_intro_words, 320 - w / 2, IN_WORDS_Y + INTRO_WORDS_H / 2.0f - h / 2, w, h, 0, 0, c);
+	}
+
+	/* the slot: there once the words have become it, rising to the horizon as
+	 * the logo lifts, lit when the card goes in, then shrinking away */
+	float slot_y = lerpf(IN_WORDS_Y + INTRO_WORDS_H / 2.0f, IN_SLOT_Y, ease(seg(t, 2.6f, 3.2f)));
+	float shrink = ease(seg(t, 4.95f, 5.4f));
+	float lit = t >= 4.65f ? 1 - 0.5f * seg(t, 4.65f, 5.2f) : 0;
+	if (shrink < 1) intro_slot(slot_y, IN_SLOT_W / 2 * (1 - shrink), ease(seg(t, 1.95f, 2.3f)), lit);
+
+	/* the logo */
+	if (t < 4.65f) {
+		float pitch, cy, scale, shine, clip = -1;
+		const float PI2 = 6.2831853f;
+		if (t < 2.6f) {                         /* at rest; a soft gloss passes over it */
+			pitch = 0; cy = IN_CY; scale = 1; shine = -0.5f + seg(t, 0.4f, 1.4f) * 1.9f;
+		} else if (t < 3.1f) {                  /* lifts, tips a little (the wind-up) */
+			float k = ease(seg(t, 2.6f, 3.1f));
+			pitch = -0.3f * k; cy = lerpf(IN_CY, IN_TOP_Y, k); scale = 1; shine = -0.5f;
+		} else if (t < 4.1f) {                  /* the back flip, coming closer, dropping below the horizon */
+			float k = ease(seg(t, 3.1f, 4.1f));
+			pitch = lerpf(-0.3f, PI2 - 0.55f, k);
+			cy = lerpf(IN_TOP_Y, IN_CARD_Y, ease(k)); scale = lerpf(1, 1.12f, k) + 0.22f * sinf(k * 3.1415927f); shine = -0.3f + k * 1.5f;
+		} else if (t < 4.35f) {                 /* waits below the slot, tipped back */
+			float k = seg(t, 4.1f, 4.35f);
+			pitch = PI2 - 0.55f; cy = IN_CARD_Y - 3 * sinf(k * 3.1415927f); scale = 1.12f; shine = 1.2f;
+		} else {                                /* lies down and slides away into the slot */
+			float k = seg(t, 4.35f, 4.65f), e = k * k * (1.6f - 0.6f * k);
+			pitch = lerpf(PI2 - 0.55f, PI2 - 1.53f, e);
+			cy = lerpf(IN_CARD_Y, IN_SLOT_Y - 2, e); scale = lerpf(1.12f, 0.86f, e); shine = 1.3f;
+			clip = IN_SLOT_Y;
+		}
+		intro_card(320, cy, pitch, scale, shine, clip);
+	}
+
+	if (t >= 4.65f && t < 4.9f) rect(vl, vt, vr - vl, vb - vt, rgba(255, 255, 255, (u8)(110 * (1 - seg(t, 4.65f, 4.9f)))));
+}
+
 static void draw_frame(void) {
 	frame_setup();
 	L();
+	/* the opening: on its own until 6.2 s, then the screen comes up through the grid */
+	float it = intro_on ? (now_ms() - intro_at) / 1000.0f : 99;
+	if (it >= 7.0f) intro_on = false;
+	if (intro_on && it < 6.2f) { intro_draw(it); U(); return; }
+	if (sc.screen == UI_SPLASH && !sc.splash_ready) {   /* starting up: black until the settings are read */
+		rect(vl, vt, vr - vl, vb - vt, rgba(0, 0, 0, 255));
+		U();
+		return;
+	}
 	backdrop();
 	if (sc.screen == UI_SPLASH) {
 		splash_screen();
@@ -1139,6 +1340,7 @@ static void draw_frame(void) {
 		hints_row();   /* (over the panel's shade: they're for the panel too) */
 		toast_draw();
 	}
+	if (intro_on) { bd_k = 1 - ease(seg(it, 6.2f, 7.0f)); backdrop(); bd_k = 1; }
 	U();
 }
 
@@ -1195,6 +1397,9 @@ void ui_init(void) {
 	tex_init(&tex_card_mc, card_mc_tex, CARD_MC_W, CARD_MC_H, GX_TF_RGBA8);
 	tex_init(&tex_card_sd, card_sd_tex, CARD_SD_W, CARD_SD_H, GX_TF_RGBA8);
 	tex_init(&tex_card_file, card_file_tex, CARD_FILE_W, CARD_FILE_H, GX_TF_RGBA8);
+	tex_init(&tex_card_cheese, card_cheese_tex, CARD_CHEESE_W, CARD_CHEESE_H, GX_TF_RGBA8);
+	tex_init(&tex_intro_card, intro_card_tex, INTRO_CARD_W, INTRO_CARD_H, GX_TF_RGBA8);
+	tex_init(&tex_intro_words, intro_words_tex, INTRO_WORDS_W, INTRO_WORDS_H, GX_TF_RGBA8);
 	for (int i = 0; i < UI_LIST_ROWS; i++) tex_init(&tex_icon[i], icon_tex[i], 32, 32, GX_TF_RGBA8);
 
 	sc.screen = UI_SPLASH;

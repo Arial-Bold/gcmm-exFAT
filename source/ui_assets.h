@@ -27,5 +27,14 @@ extern const u8 card_sd_tex[];   /* RGBA8 */
 #define CARD_FILE_W 16
 #define CARD_FILE_H 20
 extern const u8 card_file_tex[];   /* RGBA8 */
+#define CARD_CHEESE_W 64
+#define CARD_CHEESE_H 84
+extern const u8 card_cheese_tex[];   /* RGBA8 */
+#define INTRO_CARD_W 328
+#define INTRO_CARD_H 200
+extern const u8 intro_card_tex[];   /* RGBA8 */
+#define INTRO_WORDS_W 300
+#define INTRO_WORDS_H 20
+extern const u8 intro_words_tex[];   /* RGBA8 */
 
 #endif
