@@ -1,5 +1,7 @@
 /* unzip.c - zip archive extraction. */
 #include "unzip.h"
+#include <ctype.h>
+#include <strings.h>
 #include "inflate.h"
 #include <errno.h>
 #include <stdio.h>
@@ -52,6 +54,36 @@ static bool clean_name(const char *in, char *out, size_t cap) {
     }
     out[o] = 0;
     return o > 0;
+}
+
+/* Mac zips carry a __MACOSX folder of extra file details: not needed */
+static bool is_junk(const char *name) { return !strncmp(name, "__MACOSX", 8) && (name[8] == '/' || !name[8]); }
+
+/* How many leading folders to leave out when unzipping into dest: a zip
+ * whose files all sit in "apps/cubeverse/..." unzipped into ".../apps" (or
+ * ".../apps/cubeverse") would otherwise make apps/apps/... So if the zip's
+ * shared leading folders match the end of dest's path, they're skipped.
+ * prefix holds the shared leading folders ("apps/cubeverse"). Returns how
+ * many characters of each name to skip (0 for none). */
+static size_t overlap_skip(const char *prefix, const char *dest) {
+    char segs[8][128];
+    int n = 0;
+    char tmp[300];
+    snprintf(tmp, sizeof(tmp), "%s", prefix);
+    for (char *t = strtok(tmp, "/"); t && n < 8; t = strtok(NULL, "/")) snprintf(segs[n++], sizeof(segs[0]), "%s", t);
+    /* the most of the zip's leading folders that match the end of dest */
+    for (int k = n; k > 0; k--) {
+        char want[300] = "";
+        for (int i = 0; i < k; i++) {
+            size_t l = strlen(want);
+            snprintf(want + l, sizeof(want) - l, "%s%s", i ? "/" : "", segs[i]);
+        }
+        size_t wl = strlen(want), dl = strlen(dest);
+        while (dl > 0 && dest[dl - 1] == '/') dl--;
+        if (dl >= wl && !strncasecmp(dest + dl - wl, want, wl) && (dl == wl || dest[dl - wl - 1] == '/' || dest[dl - wl - 1] == ':'))
+            return wl + 1;
+    }
+    return 0;
 }
 
 typedef struct {
@@ -127,8 +159,10 @@ bool unzip_file(const char *zip_path, const char *dest_dir, UnzipProgress *pg, v
         free(cd); fclose(f); snprintf(err, errlen, "Couldn't read the zip file"); return false;
     }
 
-    /* first pass: totals for the progress bar */
+    /* first pass: totals for the progress bar, and the folders every file shares */
     if (pg) { pg->done = 0; pg->total = 0; pg->files_done = 0; pg->files_total = 0; }
+    char shared[300] = "";
+    bool first = true;
     size_t p = 0;
     for (uint64_t i = 0; i < entries && p + 46 <= cd_size; i++) {
         unsigned char *h = cd + p;
@@ -144,8 +178,28 @@ bool unzip_file(const char *zip_path, const char *dest_dir, UnzipProgress *pg, v
             }
         }
         if (pg) { pg->total += usize; if (nl && h[46 + nl - 1] != '/') pg->files_total++; }
+        char raw0[300], name0[300];
+        size_t cn0 = nl < sizeof(raw0) - 1 ? nl : sizeof(raw0) - 1;
+        memcpy(raw0, h + 46, cn0);
+        raw0[cn0] = 0;
+        bool dir0 = cn0 && (raw0[cn0 - 1] == '/' || raw0[cn0 - 1] == '\\');
+        if (!dir0 && clean_name(raw0, name0, sizeof(name0)) && !is_junk(name0)) {
+            /* the folders this file is in (folder entries don't count: a
+             * zip lists "apps/" as well as "apps/cubeverse/...") */
+            char *slash = strrchr(name0, '/');
+            if (slash) *slash = 0; else name0[0] = 0;
+            if (first) { snprintf(shared, sizeof(shared), "%s", name0); first = false; }
+            else {
+                /* keep only the leading folders both share */
+                size_t k = 0, last = 0;
+                while (shared[k] && name0[k] && tolower((unsigned char)shared[k]) == tolower((unsigned char)name0[k])) { k++; if (shared[k] == '/' || !shared[k]) last = k; }
+                if (!(name0[k] == 0 || name0[k] == '/') || !(shared[k] == 0 || shared[k] == '/')) k = last;
+                shared[k] = 0;
+            }
+        }
         p += 46 + nl + xl + cl;
     }
+    size_t skip = shared[0] ? overlap_skip(shared, dest_dir) : 0;
 
     bool ok = true;
     make_dirs(dest_dir);
@@ -177,7 +231,13 @@ bool unzip_file(const char *zip_path, const char *dest_dir, UnzipProgress *pg, v
         raw[cn] = 0;
         p += 46 + nl + xl + cl;
         bool is_dir = cn && (raw[cn - 1] == '/' || raw[cn - 1] == '\\');
-        if (!clean_name(raw, name, sizeof(name))) continue;
+        if (!clean_name(raw, name, sizeof(name)) || is_junk(name)) continue;
+        if (skip) {
+            /* (the folder shared with dest's own name: left out) */
+            if (strlen(name) < skip) continue;
+            memmove(name, name + skip, strlen(name + skip) + 1);
+            if (!name[0]) continue;
+        }
         snprintf(path, sizeof(path), "%s/%s", dest_dir, name);
         if (is_dir) { make_dirs(path); continue; }
         if (pg) snprintf(pg->current, sizeof(pg->current), "%s", name);
