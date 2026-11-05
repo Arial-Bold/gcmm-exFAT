@@ -1,5 +1,8 @@
 # GCMM exFAT
 
+<img width="1280" height="960" alt="screenshot1" src="https://github.com/user-attachments/assets/46700957-6eba-42c9-bd03-6b12448abe83" />
+
+
 GCMM exFAT backs up, restores and deletes the saves on your GameCube memory cards, using an SD card. It's an unofficial fork of [suloku's GCMM](https://github.com/suloku/gcmm) for the GameCube, with:
 
 - **exFAT SD cards**, as well as FAT and FAT32
@@ -16,6 +19,9 @@ GCMM exFAT backs up, restores and deletes the saves on your GameCube memory card
 It runs on the GameCube only.
 
 ## What it does
+
+<img width="1280" height="960" alt="screenshot2" src="https://github.com/user-attachments/assets/ba5a0414-fb77-40e0-8b92-906bf4ee5f98" />
+
 
 The main screen has three big choices:
 
@@ -74,6 +80,9 @@ Some Launchers can keep a virtual memory card on the SD card for games to use in
 GCMM exFAT reads and writes the card's own directory and block table inside the image, keeping its checksums right and changing the spare copy first, as a real memory card does, so games and your Launcher see a normal, healthy card.
 
 ## Network transfer
+
+<img width="1280" height="960" alt="screenshot3" src="https://github.com/user-attachments/assets/0b435e14-2e5a-4e7f-80db-c502d95668b7" />
+
 
 In Card tools, with a Broadband Adapter or a WIZnet-based adapter (such as the ETH2GC) connected to your router. Scan the QR code with your phone, or type the address it shows into a browser on a computer on the same network.
 
