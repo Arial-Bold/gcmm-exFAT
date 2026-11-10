@@ -211,22 +211,27 @@ def logo(tagline=True, shadow=True):
 
 def cheese_card(w, h):
     """the easter egg's virtual card: the simple memory card, made of Swiss
-    cheese (holes in it, a rind-coloured label edge). Drawn big, scaled down,
-    centred in a w x h picture like memory_card()."""
+    cheese: pale ivory, with holes, and the label just a darker patch of
+    cheese. Drawn big, scaled down, centred in a w x h picture like
+    memory_card()."""
     S = 4
     W = w * S; H = round(W * 1.06)
-    body = vgrad(W, H, (255, 220, 110), (232, 170, 50))
+    top, bot, hole = (255, 249, 228), (236, 222, 182), (214, 192, 140)
+    def shade(c, k): return tuple(max(0, min(255, round(v * k))) for v in c[:3])
+    body = vgrad(W, H, top, bot)
+    lab = Image.new('L', (W, H), 0)   # the label: a little darker, no outline
+    ImageDraw.Draw(lab).rounded_rectangle([W * 0.1, H * 0.18, W * 0.9, H * 0.66], radius=W // 20, fill=255)
+    body.paste(vgrad(W, H, shade(top, 0.88), shade(bot, 0.88)), (0, 0), lab)
     m = Image.new('L', (W, H), 0); ImageDraw.Draw(m).rounded_rectangle([0, 0, W - 1, H - 1], radius=W // 10, fill=255)
     body.putalpha(m)
     d = ImageDraw.Draw(body)
     for (x, y, r) in [(0.22, 0.30, 0.10), (0.62, 0.22, 0.07), (0.78, 0.55, 0.11), (0.35, 0.62, 0.13), (0.15, 0.85, 0.06),
                       (0.58, 0.83, 0.08), (0.88, 0.88, 0.05), (0.48, 0.42, 0.05)]:
         rr = r * W; cx, cy = x * W, y * H
-        d.ellipse([cx - rr, cy - rr + rr * 0.18, cx + rr, cy + rr + rr * 0.18], fill=(170, 105, 15, 255))
-        d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=(196, 128, 24, 255))
-    d.rounded_rectangle([W * 0.1, H * 0.18, W * 0.9, H * 0.66], radius=W // 20, outline=(255, 245, 200, 200), width=S * 2)
+        d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=shade(hole, 0.86) + (255,))                    # its shadowed top edge
+        d.ellipse([cx - rr * 0.94, cy - rr * 0.8, cx + rr * 0.94, cy + rr * 0.98], fill=hole + (255,))    # the hollow
     ridge = round(H * 0.12); tw = W * 0.06
-    d.polygon([(W / 2 - tw, ridge * 0.72), (W / 2 + tw, ridge * 0.72), (W / 2, ridge * 0.3)], fill=(255, 255, 255, 170))
+    d.polygon([(W / 2 - tw, ridge * 0.72), (W / 2 + tw, ridge * 0.72), (W / 2, ridge * 0.3)], fill=shade(bot, 0.80) + (255,))
     small = body.resize((w, round(H / S)), Image.LANCZOS)
     out = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     out.alpha_composite(small, (0, (h - small.height) // 2))
