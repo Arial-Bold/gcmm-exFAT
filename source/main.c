@@ -46,7 +46,7 @@
 #define GCLOADER_PATH "gcl"
 char fatpath[4];
 
-const char appversion[] = "v1.2";
+const char appversion[] = "v1.3";
 int mode;
 int cancel;
 int doall;

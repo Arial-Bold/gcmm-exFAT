@@ -584,8 +584,8 @@ static void settings_help(int row)
 		{ "Exit to Launcher", "Leaves GCMM exFAT." },
 	};
 	ui_status((char *)help[row][0], (char *)help[row][1]);
-	if (row >= SET_UPDATE) Hints(3, "S:Move", "A:Select", "B:Back");
-	else Hints(3, "S:Move", "A:Change", "B:Back");
+	if (row >= SET_UPDATE) Hints(3, "S:Select", "A:Confirm", "B:Close");
+	else Hints(3, "S:Select", "A:Change", "B:Close");
 }
 
 static void UpdatePage(void);

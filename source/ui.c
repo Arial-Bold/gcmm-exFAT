@@ -908,26 +908,50 @@ static void toast_draw(void) {
 }
 
 /* the Settings page */
+/* (from BrainBox: faint grid lines over part of a highlight, fading out) */
+static void grid_patch(float x, float y, float w, float h, float cell, float span, int side, Color c) {
+	float sw = w * span, x0 = side > 0 ? x + w - sw : x;
+	float lw = pixel_w();
+	for (float gx = cell; gx < sw; gx += cell) {
+		float px = side > 0 ? x0 + sw - gx : x0 + gx;
+		float k = 1 - gx / sw;
+		rect(px, y, lw, h, alpha(c, k));
+	}
+	Color clear = c;
+	clear.a = 0;
+	for (float gy = cell; gy < h; gy += cell) {
+		if (side > 0) rect_h(x0, y + gy, sw, pixel_h(), clear, c);
+		else rect_h(x0, y + gy, sw, pixel_h(), c, clear);
+	}
+}
+
+/* the Settings page: in its frame, with the indigo bar along the bottom
+ * saying what the chosen setting does; the rows as Flashcube and BrainBox
+ * have them: plain, the chosen one frosted, each choice between its arrows
+ * on the right */
 static void settings_screen(void) {
 	panel(22, 62, 596, 300);
 	text(34, 80, "Settings", 12, TITLE, 0, 380);
 	rule(32, 92, 576);
+	const float pitch = 26.5f, rh = 25;
 	for (int i = 0; i < sc.orow_count; i++) {
-		/* three groups: the picture; sounds, the opening and Launcher; then update and exit */
-		float x = 34, y = 100 + i * 27 + (i >= 4 ? 6 : 0) + (i >= 7 ? 6 : 0), w = 566, h = 24, cy = y + h / 2;
-		bool on = i == sc.osel;
-		rect_v(x, y, w, h, rgba(76, 94, 114, on ? 150 : 80), rgba(40, 54, 70, on ? 160 : 90));
-		rect(x + 1, y + 1, w - 2, 1, rgba(255, 255, 255, 30));
-		text(x + 16, cy, sc.orows[i].label, 13, TEXT, 0, 260);
-		const char *v = sc.orows[i].value;
-		if (v[0] == 2) text(x + w - 16, cy, v + 1, 12, SOFT, 2, 260);
-		else if (v[0] && v[0] != 1) {
-			float vx = x + w - 110;
-			tri(vx - 66, cy, vx - 59, cy - 6, vx - 59, cy + 6, on ? GOLD : DIM);
-			tri(vx + 66, cy, vx + 59, cy - 6, vx + 59, cy + 6, on ? GOLD : DIM);
-			text(vx, cy, v, 13, on ? TEXT : SOFT, 1, 110);
+		float x = 32, y = 100 + i * pitch, w = 576, cy = y + rh / 2;
+		if (i == sc.osel) {
+			rrect_v(x, y, w, rh, 3, rgba(140, 160, 180, 87), rgba(70, 90, 110, 56));
+			grid_patch(x + 1, y + 1, w - 2, rh - 2, 7, 0.45f, -1, rgba(200, 235, 245, 51));
+			outline(x, y, w, rh, 3, 1, rgba(215, 225, 240, 153));
 		}
-		if (on) gold_ring(x, y, w, h);
+		text(x + 14, cy, sc.orows[i].label, 14, TEXT, 0, 260);
+		const char *v = sc.orows[i].value;
+		float right = x + w - 14;
+		if (v[0] == 2) text(right, cy, v + 1, 14, TEXT, 2, 260);        /* information: no arrows */
+		else if (v[0] && v[0] != 1) {                                   /* a choice: between arrows */
+			float vw = fminf(text_width(v, 14), 200);
+			tri(right, cy, right - 9, cy - 7, right - 9, cy + 7, TEXT);
+			text(right - 19, cy, v, 14, TEXT, 2, 200);
+			float lx = right - 19 - vw - 10;
+			tri(lx - 9, cy, lx, cy - 7, lx, cy + 7, TEXT);
+		}
 	}
 }
 
