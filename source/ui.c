@@ -124,6 +124,7 @@ static struct {
 	char overlay_title[48];
 	Pair orows[UI_OVERLAY_ROWS];
 	int orow_count, osel;
+	int oscroll_from, oscroll_first, oscroll_count, oscroll_total;   /* (a scrolling overlay list: see ui_overlay_scroll) */
 	int orow_icon[UI_OVERLAY_ROWS];
 } sc;
 
@@ -193,7 +194,7 @@ void ui_list_row(int r, const char *title, const char *detail, const char *block
 }
 void ui_list_select(int r) { L(); sc.list_sel = r; U(); }
 void ui_list_scroll(int f, int c, int t) { L(); sc.scroll_first = f; sc.scroll_count = c; sc.scroll_total = t; U(); }
-void ui_overlay(int o, const char *t) { L(); sc.overlay = o; cpy(sc.overlay_title, t, sizeof(sc.overlay_title)); sc.orow_count = 0; sc.osel = 0; memset(sc.orow_icon, 0, sizeof(sc.orow_icon)); U(); }
+void ui_overlay(int o, const char *t) { L(); sc.overlay = o; cpy(sc.overlay_title, t, sizeof(sc.overlay_title)); sc.orow_count = 0; sc.osel = 0; sc.oscroll_total = 0; memset(sc.orow_icon, 0, sizeof(sc.orow_icon)); U(); }
 void ui_overlay_row(int r, const char *l, const char *v) {
 	if (r < 0 || r >= UI_OVERLAY_ROWS) return;
 	L(); cpy(sc.orows[r].label, l, sizeof(sc.orows[r].label)); cpy(sc.orows[r].value, v, TXT); if (!v) sc.orows[r].value[0] = 1; U();
@@ -201,6 +202,7 @@ void ui_overlay_row(int r, const char *l, const char *v) {
 void ui_overlay_select(int r) { L(); sc.osel = r; U(); }
 void ui_overlay_row_icon(int r, int icon) { if (r >= 0 && r < UI_OVERLAY_ROWS) { L(); sc.orow_icon[r] = icon; U(); } }
 void ui_overlay_rows(int n) { L(); sc.orow_count = n; U(); }
+void ui_overlay_scroll(int from, int first, int count, int total) { L(); sc.oscroll_from = from; sc.oscroll_first = first; sc.oscroll_count = count; sc.oscroll_total = total; U(); }
 
 /* ------------------------------------------------------- the rows' icons */
 
@@ -1076,13 +1078,24 @@ static void overlay_panel(void) {
 	if (sc.overlay == UI_OVERLAY_CARDS) { cards_panel(); return; }
 	float w = 360, rows = sc.orow_count, h = 64 + rows * 34;
 	float x = 320 - w / 2, y = 222 - h / 2;
+	if (y + h > 364) y = 364 - h;   /* (always clear of the bar along the bottom) */
 	panel(x, y, w, h);
 	text(x + 14, y + 18, sc.overlay_title, 13, TITLE, 0, w - 28);
 	rule(x + 14, y + 30, w - 28);
+	bool scrolls = sc.oscroll_total > sc.oscroll_count && sc.oscroll_count > 0;
+	float rw = scrolls ? w - 42 : w - 28;   /* (room for the scroll bar) */
+	if (scrolls) {   /* the scroll bar, beside the rows that scroll */
+		float top = y + 42 + sc.oscroll_from * 34, bh = (sc.orow_count - sc.oscroll_from) * 34 - 8;
+		float bx = x + w - 22;
+		rrect_v(bx, top, 6, bh, 3, rgba(0, 0, 0, 120), rgba(0, 0, 0, 120));
+		float kh = fmaxf(16, bh * sc.oscroll_count / sc.oscroll_total);
+		float ky = top + (bh - kh) * sc.oscroll_first / (sc.oscroll_total - sc.oscroll_count);
+		rrect_v(bx, ky, 6, kh, 3, rgba(220, 228, 245, 220), rgba(170, 180, 205, 220));
+	}
 	for (int i = 0; i < sc.orow_count; i++) {
-		float ry = y + 42 + i * 34;
-		frost(x + 14, ry, w - 28, 26);
-		if (i == sc.osel) gold_ring(x + 14, ry, w - 28, 26);
+		float ry = y + 42 + i * 34, rwi = i < sc.oscroll_from ? w - 28 : rw;   /* (rows above the scrolling ones: full width) */
+		frost(x + 14, ry, rwi, 26);
+		if (i == sc.osel) gold_ring(x + 14, ry, rwi, 26);
 		text(x + 26, ry + 13, sc.orows[i].label, 12, TEXT, 0, 170);
 		if (sc.orows[i].value[0] && sc.orows[i].value[0] != 1) {
 			bool on = i == sc.osel;

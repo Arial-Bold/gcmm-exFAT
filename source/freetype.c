@@ -996,6 +996,7 @@ static void place_file(const XferItem *it, const char *rel, bool unzip)
 
 /* Asks where the file goes: A opens a folder or chooses "Put it here",
  * B goes up a folder, Z (for a zip) chooses whether to unzip it */
+#define WHERE_ROWS 7   /* "Put it here" and 6 folders at a time */
 static void ask_where(const XferItem *it)
 {
 	char rel[300] = "", dir[340], title[96], place[200], put[80], l1[200];
@@ -1010,14 +1011,16 @@ static void ask_where(const XferItem *it)
 			sel = 0; top = 0;
 			reload = false;
 		}
-		/* the rows: "Put it here", then up to 7 folders (scrolling) */
-		int shown = nfolders - top < UI_OVERLAY_ROWS - 1 ? nfolders - top : UI_OVERLAY_ROWS - 1;
+		/* the rows: "Put it here", then up to WHERE_ROWS - 1 folders (scrolling,
+		 * so the list stays clear of the bar along the bottom) */
+		int shown = nfolders - top < WHERE_ROWS - 1 ? nfolders - top : WHERE_ROWS - 1;
 		ui_overlay(UI_OVERLAY_DEVICES, title);
 		place_name(rel, place, sizeof(place));
 		snprintf(put, sizeof(put), "Put it here (%s)", rel[0] ? (strrchr(rel, '/') ? strrchr(rel, '/') + 1 : rel) : "the top");
 		ui_overlay_row(0, put, NULL);
 		for (int i = 0; i < shown; i++) ui_overlay_row(i + 1, folders[top + i], NULL);
 		ui_overlay_rows(1 + shown);
+		ui_overlay_scroll(1, top, shown, nfolders);
 		ui_overlay_select(sel == 0 ? 0 : sel - top);
 		snprintf(l1, sizeof(l1), "%s", place);
 		ui_status(l1, zip ? (unzip ? "It's a zip: it'll be unzipped into the folder you choose." : "It'll be kept as a zip.") : "");
@@ -1035,7 +1038,7 @@ static void ask_where(const XferItem *it)
 			if (ns != sel) {
 				sel = ns;
 				if (sel > 0 && sel - 1 < top) top = sel - 1;
-				if (sel > 0 && sel - 1 >= top + UI_OVERLAY_ROWS - 1) top = sel - 1 - (UI_OVERLAY_ROWS - 2);
+				if (sel > 0 && sel - 1 >= top + WHERE_ROWS - 1) top = sel - 1 - (WHERE_ROWS - 2);
 				if (sel == 0) top = 0;
 				break;
 			}

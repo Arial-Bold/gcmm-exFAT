@@ -126,5 +126,7 @@ void ui_overlay(int overlay, const char *title);
 void ui_overlay_row(int row, const char *label, const char *value);   /* value NULL: a plain choice */
 void ui_overlay_select(int row);
 void ui_overlay_rows(int count);
+/* a scrolling overlay list: the rows from row `from` down show items first..first+count-1 of total (for the scroll bar) */
+void ui_overlay_scroll(int from, int first, int count, int total);
 
 #endif
